@@ -36,7 +36,7 @@ type fileIndexPath struct {
 	Index    int
 }
 
-const MB50 = 1024 * 1024
+const MB50 = 20 * 1024 * 1024
 
 func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 	//FsIDMapDLink := make(map[int64]*DownloadInfo)

@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type DownloadLinkResp struct {
@@ -59,7 +60,8 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 
 	// 拿到下载地址后，开始协程下载
 	// 协程下载最高并发，cpu 数量
-	limitChan := make(chan struct{}, runtime.NumCPU())
+	maxConcurrentNum := min(runtime.NumCPU(), 16)
+	limitChan := make(chan struct{}, maxConcurrentNum)
 	defer close(limitChan)
 	client := http.Client{}
 	// 整理文件结果的协程要有信号量来知道全都处理好了，主协程才能结束
@@ -134,6 +136,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 			// 分片下载带拼接
 			for i := 0; i < int(sliceNum); i++ {
 				limitChan <- struct{}{}
+				time.Sleep(time.Second)
 				// 下载部分启动协程下载，启动协程受限于并发控制信道
 				downloadWG.Add(1)
 				go func(sliceIndex int, innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string) {
@@ -190,6 +193,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 			}
 			// 再下载最后一个文件，也是要控制并发地下载
 			limitChan <- struct{}{}
+			time.Sleep(time.Second)
 			downloadWG.Add(1)
 			go func(innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string) {
 				header := http.Header{}
@@ -253,6 +257,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 		} else {
 			// 不分片，直接下
 			limitChan <- struct{}{}
+			time.Sleep(time.Second)
 			go func(_url *url.URL, baiduFilePath string) {
 				header := http.Header{}
 				header.Set("User-Agent", "pan.baidu.com")
@@ -267,7 +272,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 						fmt.Printf("网络连接错误 clientDo\n")
 						continue
 					}
-					if resp.StatusCode == 206 {
+					if resp.StatusCode != 206 {
 						fmt.Printf("状态码非 206 \n")
 						continue
 					}

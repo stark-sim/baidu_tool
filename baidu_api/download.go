@@ -3,6 +3,8 @@ package baidu_api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/vbauerster/mpb"
+	"github.com/vbauerster/mpb/decor"
 	"io"
 	"net/http"
 	"net/url"
@@ -66,6 +68,10 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 	client := http.Client{}
 	// 整理文件结果的协程要有信号量来知道全都处理好了，主协程才能结束
 	joinSliceWG := &sync.WaitGroup{}
+
+	// 进度条使用的 wg
+	mpbWG := &sync.WaitGroup{}
+	progressBars := mpb.New(mpb.WithWaitGroup(mpbWG))
 	for _, downloadInfo := range downloadInfos {
 		// 如果文件太大，就下切片
 		var lastSize int64
@@ -78,6 +84,22 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 		} else {
 			lastSize = downloadInfo.Size
 		}
+
+		// 每下载一个完整的文件，就加一条进度条
+		mpbWG.Add(1)
+		tempBar := progressBars.AddBar(
+			downloadInfo.Size,
+			mpb.PrependDecorators(
+				decor.Name(downloadInfo.Filename),
+				decor.Percentage(decor.WCSyncSpace),
+			),
+			mpb.AppendDecorators(
+				decor.OnComplete(
+					decor.EwmaETA(decor.ET_STYLE_GO, 30, decor.WCSyncWidth),
+					"done",
+				),
+			),
+		)
 
 		// 准备下载请求
 		_url := downloadInfo.DLink + "&access_token=" + accessToken
@@ -93,7 +115,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 			tempFileChan := make(chan *fileIndexPath, 5)
 			// 有一个独立协程做收集文件信息并最后拼接操作
 			joinSliceWG.Add(1)
-			go func(innerFileChan chan *fileIndexPath, finalFileName string) {
+			go func(innerFileChan chan *fileIndexPath, finalFileName string, barWG *sync.WaitGroup) {
 				var sliceFileIndexPaths []*fileIndexPath
 				for tempFileIndexPath := range innerFileChan {
 					sliceFileIndexPaths = append(sliceFileIndexPaths, tempFileIndexPath)
@@ -128,8 +150,12 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 				}
 
 				fmt.Printf("文件拼接好了 %s\n", finalFileName)
+				// 进度条展示完成
+				barWG.Done()
+				// 文件拼接完成，意味着单元程序可以结束
 				joinSliceWG.Done()
-			}(tempFileChan, "."+downloadInfo.Path)
+
+			}(tempFileChan, "."+downloadInfo.Path, mpbWG)
 
 			// 分片下载需要一个信号量让接受文件结果协程知道收集可以结束
 			downloadWG := &sync.WaitGroup{}
@@ -139,7 +165,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 				time.Sleep(time.Second)
 				// 下载部分启动协程下载，启动协程受限于并发控制信道
 				downloadWG.Add(1)
-				go func(sliceIndex int, innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string) {
+				go func(sliceIndex int, innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string, bar *mpb.Bar) {
 					header := http.Header{}
 					header.Set("User-Agent", "pan.baidu.com")
 					header.Set("Range", fmt.Sprintf("bytes=%v-%v", sliceIndex*MB50, sliceIndex*MB50+MB50-1))
@@ -187,15 +213,17 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 							Index:    sliceIndex,
 						}
 						innerDownloadWG.Done()
+						// 进度条增长
+						bar.IncrBy(MB50)
 						break
 					}
-				}(i, tempFileChan, downloadWG, realUrl, downloadInfo.Path)
+				}(i, tempFileChan, downloadWG, realUrl, downloadInfo.Path, tempBar)
 			}
 			// 再下载最后一个文件，也是要控制并发地下载
 			limitChan <- struct{}{}
 			time.Sleep(time.Second)
 			downloadWG.Add(1)
-			go func(innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string) {
+			go func(innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string, bar *mpb.Bar) {
 				header := http.Header{}
 				header.Set("User-Agent", "pan.baidu.com")
 				header.Set("Range", fmt.Sprintf("bytes=%v-%v", sliceNum*MB50, sliceNum*MB50+lastSize-1))
@@ -241,16 +269,18 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 						FilePath: localDownloadFilePath,
 						Index:    int(sliceNum),
 					}
+					// 进度条增长
+					bar.IncrBy(int(lastSize))
 					innerDownloadWG.Done()
 					break
 				}
-			}(tempFileChan, downloadWG, realUrl, downloadInfo.Path)
+			}(tempFileChan, downloadWG, realUrl, downloadInfo.Path, tempBar)
 
 			// 这一步也不阻塞，因为还有下一个文件
 			go func(innerDownloadWG *sync.WaitGroup, innerChan chan *fileIndexPath) {
 				// 都下载并传输结果完毕
 				innerDownloadWG.Wait()
-				// 那么就可以关闭结果传输信道，让结果收集者知道收集完了
+				// 那么就可以关闭结果传输信道，让结果收集者知道传输完了
 				close(innerChan)
 			}(downloadWG, tempFileChan)
 
@@ -258,7 +288,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 			// 不分片，直接下
 			limitChan <- struct{}{}
 			time.Sleep(time.Second)
-			go func(_url *url.URL, baiduFilePath string) {
+			go func(_url *url.URL, baiduFilePath string, bar *mpb.Bar, barWG *sync.WaitGroup, fileSize int64) {
 				header := http.Header{}
 				header.Set("User-Agent", "pan.baidu.com")
 				request := http.Request{
@@ -297,11 +327,16 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 						fmt.Printf("写文件错误 osWriteFile\n")
 						continue
 					}
+					// 下载完成，进度条增长
+					bar.IncrBy(int(fileSize))
+					barWG.Done()
 					break
 				}
-			}(realUrl, downloadInfo.Path)
+			}(realUrl, downloadInfo.Path, tempBar, mpbWG, downloadInfo.Size)
 		}
 	}
+	// 等待进度条都结束
+	mpbWG.Wait()
 	// 这个 wg 结束了，那就都结束了
 	joinSliceWG.Wait()
 	return nil

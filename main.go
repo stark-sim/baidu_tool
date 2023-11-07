@@ -28,23 +28,23 @@ func main() {
 	}
 	// 如果文件夹信息中没有内容，那么要么是文件，要么是没有
 	if dirResp.List == nil || len(dirResp.List) == 0 {
-		// 退回上一层路径，再次搜索
+		// 退回上一层路径，用列表再次搜索
 		parentDir, file, err := baidu_api.DivideDirAndFile(input.Path)
 		if err != nil {
 			return
 		}
-		dirResp, err = baidu_api.GetFileOrDirResp(input.AccessToken, parentDir)
+		dirListResp, err := baidu_api.GetDirByList(input.AccessToken, parentDir)
 		if err != nil {
 			return
 		}
 		// 看看这次 list 中有没有 file
-		if dirResp.List == nil || len(dirResp.List) == 0 {
+		if dirListResp.List == nil || len(dirListResp.List) == 0 {
 			fmt.Printf("not found %s\n", input.Path)
 			return
 		} else {
 			// 找到 list 里的 file，只下载这个 file
 			foundFile := false
-			for _, item := range dirResp.List {
+			for _, item := range dirListResp.List {
 				if item.ServerFilename == file {
 					err = baidu_api.DownloadFileOrDir(input.AccessToken, []*baidu_api.FileOrDir{item})
 					if err != nil {

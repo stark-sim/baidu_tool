@@ -39,7 +39,7 @@ type fileIndexPath struct {
 	Index    int
 }
 
-const MB50 = 20 * 1024 * 1024
+const MB50 = 50 * 1024 * 1024
 
 func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 	//FsIDMapDLink := make(map[int64]*DownloadInfo)
@@ -130,6 +130,9 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 				sort.Slice(sliceFileIndexPaths, func(i, j int) bool {
 					return sliceFileIndexPaths[i].Index < sliceFileIndexPaths[j].Index
 				})
+
+				// 拼接后要删除文件，都删除完拼接过程再算结束
+				removeSliceWG := &sync.WaitGroup{}
 				for i := 0; i < len(sliceFileIndexPaths); i++ {
 					content, err := os.ReadFile(sliceFileIndexPaths[i].FilePath)
 					if err != nil {
@@ -141,17 +144,23 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 						fmt.Printf("追加文件错误")
 						return
 					}
-					go func(sliceFile string) {
+					removeSliceWG.Add(1)
+					go func(sliceFile string, wg *sync.WaitGroup) {
 						if err = os.Remove(sliceFile); err != nil {
 							fmt.Printf("删除碎片文件错误")
 							return
 						}
-					}(sliceFileIndexPaths[i].FilePath)
+						wg.Done()
+					}(sliceFileIndexPaths[i].FilePath, removeSliceWG)
 				}
 
 				fmt.Printf("文件拼接好了 %s\n", finalFileName)
 				// 进度条展示完成
 				barWG.Done()
+
+				// 等待删除结束
+				removeSliceWG.Wait()
+
 				// 文件拼接完成，意味着单元程序可以结束
 				joinSliceWG.Done()
 
@@ -336,7 +345,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 		}
 	}
 	// 等待进度条都结束
-	mpbWG.Wait()
+	progressBars.Wait()
 	// 这个 wg 结束了，那就都结束了
 	joinSliceWG.Wait()
 	return nil

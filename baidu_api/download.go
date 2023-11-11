@@ -41,10 +41,14 @@ type fileIndexPath struct {
 
 const MB50 = 50 * 1024 * 1024
 
-func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
-	//FsIDMapDLink := make(map[int64]*DownloadInfo)
+// DownloadFileOrDir 下载文件或者下载文件夹中的文件们
+// @author StarkSim
+// @param accessToken 身份凭证
+// @param sources 文件下载信息
+// @param unusedPath 不需要的文件路径前缀，让下载的文件没有太多不需要的前缀
+func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath string) error {
 	var fsIDList []int64
-	for _, item := range source {
+	for _, item := range sources {
 		// 下载一个文件
 		if item.IsDir == 1 {
 			continue
@@ -85,7 +89,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 			lastSize = downloadInfo.Size
 		}
 
-		// 每下载一个完整的文件，就加一条进度条
+		// 每当要下载一个完整的文件，就加一条进度条
 		mpbWG.Add(1)
 		tempBar := progressBars.AddBar(
 			downloadInfo.Size,
@@ -120,7 +124,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 				for tempFileIndexPath := range innerFileChan {
 					sliceFileIndexPaths = append(sliceFileIndexPaths, tempFileIndexPath)
 				}
-				targetFile, err := os.OpenFile(finalFileName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0666)
+				targetFile, err := os.OpenFile("."+strings.TrimPrefix(finalFileName, unusedPath), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0777)
 				defer targetFile.Close()
 				if err != nil {
 					fmt.Printf("打开目标文件错误: %v\n", err)
@@ -164,11 +168,11 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 				// 文件拼接完成，意味着单元程序可以结束
 				joinSliceWG.Done()
 
-			}(tempFileChan, "."+downloadInfo.Path, mpbWG)
+			}(tempFileChan, downloadInfo.Path, mpbWG)
 
 			// 分片下载需要一个信号量让接受文件结果协程知道收集可以结束
 			downloadWG := &sync.WaitGroup{}
-			// 分片下载带拼接
+			// 分片下载
 			for i := 0; i < int(sliceNum); i++ {
 				limitChan <- struct{}{}
 				time.Sleep(time.Second)
@@ -203,7 +207,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 						// 网络请求下载好后要收回下载并发信号量
 						<-limitChan
 						// 把文件保存为碎片文件
-						localDownloadFilePath := fmt.Sprintf(".%s%d", baiduFilePath, sliceIndex)
+						localDownloadFilePath := fmt.Sprintf(".%s%d", strings.TrimPrefix(baiduFilePath, unusedPath), sliceIndex)
 						dir, _, err := DivideDirAndFile(localDownloadFilePath)
 						if err != nil {
 							continue
@@ -260,7 +264,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 					}
 					<-limitChan
 					// 把文件保存为碎片文件
-					localDownloadFilePath := fmt.Sprintf(".%s%d", baiduFilePath, sliceNum)
+					localDownloadFilePath := fmt.Sprintf(".%s%d", strings.TrimPrefix(baiduFilePath, unusedPath), sliceNum)
 					dir, _, err := DivideDirAndFile(localDownloadFilePath)
 					if err != nil {
 						continue
@@ -323,7 +327,7 @@ func DownloadFileOrDir(accessToken string, source []*FileOrDir) error {
 					}
 					<-limitChan
 					// 把文件保存为一个文件
-					localDownloadFilePath := "." + baiduFilePath
+					localDownloadFilePath := "." + strings.TrimPrefix(baiduFilePath, unusedPath)
 					dir, _, err := DivideDirAndFile(localDownloadFilePath)
 					if err != nil {
 						continue

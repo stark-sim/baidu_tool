@@ -54,6 +54,11 @@ func GetFileOrDirResp(accessToken string, filePath string) (*DirRecursiveResp, e
 
 // DivideDirAndFile 分离文件路径中的 / 来找出文件夹和文件名
 func DivideDirAndFile(filePath string) (dir string, file string, err error) {
+	// 如果最后一个字符是 / ，则相当于最后一个 / 没有意义，可以去掉
+	if filePath[len(filePath)-1] == '/' {
+		filePath = filePath[:len(filePath)-1]
+	}
+	// 再开始从尾找第一个 /
 	lastIndex := strings.LastIndex(filePath, "/")
 	if lastIndex == -1 {
 		return "", "", fmt.Errorf("not found /")

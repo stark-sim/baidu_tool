@@ -46,7 +46,8 @@ func main() {
 			foundFile := false
 			for _, item := range dirListResp.List {
 				if item.ServerFilename == file {
-					err = baidu_api.DownloadFileOrDir(input.AccessToken, []*baidu_api.FileOrDir{item})
+					// 直接下载这个文件，不需要前面的目录
+					err = baidu_api.DownloadFileOrDir(input.AccessToken, []*baidu_api.FileOrDir{item}, parentDir)
 					if err != nil {
 						return
 					}
@@ -60,8 +61,10 @@ func main() {
 			}
 		}
 	} else {
+		// 下载文件夹时，不需要前面的冗余文件夹，找出该 path 的前面的文件夹
+		parentDir, _, err := baidu_api.DivideDirAndFile(input.Path)
 		// 找到了，那么这是个文件夹，下载该文件夹和其内部所有文件
-		err = baidu_api.DownloadFileOrDir(input.AccessToken, dirResp.List)
+		err = baidu_api.DownloadFileOrDir(input.AccessToken, dirResp.List, parentDir)
 		if err != nil {
 			return
 		}

@@ -158,7 +158,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 					}(sliceFileIndexPaths[i].FilePath, removeSliceWG)
 				}
 
-				fmt.Printf("文件拼接好了 %s\n", finalFileName)
+				fmt.Printf("文件拼接好了 %s\n", "."+strings.TrimPrefix(finalFileName, unusedPath))
 				// 进度条展示完成
 				barWG.Done()
 

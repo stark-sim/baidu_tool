@@ -63,7 +63,7 @@ func DivideDirAndFile(filePath string) (dir string, file string, err error) {
 	if lastIndex == -1 {
 		return "", "", fmt.Errorf("not found /")
 	}
-	return filePath[:lastIndex+1], filePath[lastIndex+1:], nil
+	return filePath[:lastIndex], filePath[lastIndex+1:], nil
 }
 
 // DirListResp 接口文件夹列表返回

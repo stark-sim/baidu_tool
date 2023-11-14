@@ -174,9 +174,8 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 			downloadWG := &sync.WaitGroup{}
 			// 分片下载
 			for i := 0; i < int(sliceNum); i++ {
-				// 先获取一个下载进程限制器量，并留点间隔不然百度容易拒绝请求
+				// 先获取一个下载进程限制器量
 				limitChan <- struct{}{}
-				time.Sleep(time.Second)
 				// 下载部分启动协程下载，启动协程受限于并发控制信道
 				downloadWG.Add(1)
 				go func(sliceIndex int, innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string, bar *mpb.Bar) {
@@ -186,6 +185,8 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 					_, err = os.Stat(localDownloadFilePath)
 					if os.IsNotExist(err) {
 						// 不存在，继续
+						// 并留点间隔不然百度容易拒绝请求
+						time.Sleep(time.Second)
 						header := http.Header{}
 						header.Set("User-Agent", "pan.baidu.com")
 						header.Set("Range", fmt.Sprintf("bytes=%v-%v", sliceIndex*MB50, sliceIndex*MB50+MB50-1))
@@ -250,7 +251,6 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 			}
 			// 再下载最后一个文件，也是要控制并发地下载
 			limitChan <- struct{}{}
-			time.Sleep(time.Second)
 			downloadWG.Add(1)
 			go func(innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string, bar *mpb.Bar) {
 				// 先得到最终的碎片文件路径
@@ -258,6 +258,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 				// 如果碎片文件已存在，那么直接算作完成跳过
 				_, err = os.Stat(localDownloadFilePath)
 				if os.IsNotExist(err) {
+					time.Sleep(time.Second)
 					header := http.Header{}
 					header.Set("User-Agent", "pan.baidu.com")
 					header.Set("Range", fmt.Sprintf("bytes=%v-%v", sliceNum*MB50, sliceNum*MB50+lastSize-1))
@@ -330,7 +331,6 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 		} else {
 			// 不分片，直接下
 			limitChan <- struct{}{}
-			time.Sleep(time.Second)
 			go func(_url *url.URL, baiduFilePath string, bar *mpb.Bar, barWG *sync.WaitGroup, fileSize int64) {
 				// 把文件保存为一个文件
 				localDownloadFilePath := "." + strings.TrimPrefix(baiduFilePath, unusedPath)
@@ -338,6 +338,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 				_, err = os.Stat(localDownloadFilePath)
 				if os.IsNotExist(err) {
 					// 不存在，继续
+					time.Sleep(time.Second)
 					header := http.Header{}
 					header.Set("User-Agent", "pan.baidu.com")
 					request := http.Request{

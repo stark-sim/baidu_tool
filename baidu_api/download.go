@@ -6,6 +6,7 @@ import (
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
@@ -174,19 +175,18 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 			downloadWG := &sync.WaitGroup{}
 			// 分片下载
 			for i := 0; i < int(sliceNum); i++ {
-				// 先获取一个下载进程限制器量
-				limitChan <- struct{}{}
-				// 下载部分启动协程下载，启动协程受限于并发控制信道
 				downloadWG.Add(1)
-				go func(sliceIndex int, innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string, bar *mpb.Bar) {
-					// 先得到最终的碎片文件路径
-					localDownloadFilePath := fmt.Sprintf(".%s%d", strings.TrimPrefix(baiduFilePath, unusedPath), sliceIndex)
-					// 如果碎片文件已存在，那么直接算作完成跳过
-					_, err = os.Stat(localDownloadFilePath)
-					if os.IsNotExist(err) {
-						// 不存在，继续
-						// 并留点间隔不然百度容易拒绝请求
-						time.Sleep(time.Second)
+				// 先得到最终的碎片文件路径
+				localDownloadFilePath := fmt.Sprintf(".%s%d", strings.TrimPrefix(downloadInfo.Path, unusedPath), i)
+				// 如果碎片文件已存在，那么直接算作完成跳过
+				_, err = os.Stat(localDownloadFilePath)
+				if os.IsNotExist(err) {
+					// 不存在，准备启动协程下载
+					// 要启动下载协程时在获取一个下载进程限制器量
+					limitChan <- struct{}{}
+					// 并留点间隔不然百度容易拒绝请求
+					time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
+					go func(sliceIndex int, innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, fileDownloadPath string, bar *mpb.Bar) {
 						header := http.Header{}
 						header.Set("User-Agent", "pan.baidu.com")
 						header.Set("Range", fmt.Sprintf("bytes=%v-%v", sliceIndex*MB50, sliceIndex*MB50+MB50-1))
@@ -203,7 +203,8 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 								continue
 							}
 							if resp.StatusCode != 206 {
-								fmt.Printf("状态码非 206\n")
+								bts, _ := io.ReadAll(resp.Body)
+								fmt.Printf("状态码非 206 %s\n", bts)
 								continue
 							}
 							defer resp.Body.Close()
@@ -212,7 +213,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 								fmt.Printf("返回读取错误 ioReadAll\n")
 								continue
 							}
-							dir, _, err := DivideDirAndFile(localDownloadFilePath)
+							dir, _, err := DivideDirAndFile(fileDownloadPath)
 							if err != nil {
 								continue
 							}
@@ -220,45 +221,48 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 								fmt.Printf("创建文件夹错误 mkdirAll\n")
 								continue
 							}
-							if err = os.WriteFile(localDownloadFilePath, respBytes, 0666); err != nil {
+							if err = os.WriteFile(fileDownloadPath, respBytes, 0666); err != nil {
 								fmt.Printf("写文件错误 osWriteFile\n")
 								continue
 							}
+							// 网络请求下载好后要收回下载并发信号量
+							<-limitChan
 							// 保存好文件后，推送自己完成的文件信息
 							innerFileChan <- &fileIndexPath{
-								FilePath: localDownloadFilePath,
+								FilePath: fileDownloadPath,
 								Index:    sliceIndex,
 							}
-							innerDownloadWG.Done()
 							// 进度条增长
 							bar.IncrBy(MB50)
+							// 下载同步量完成一个
+							innerDownloadWG.Done()
 							break
 						}
-					} else {
-						// 存在，成功跳过
-						// 执行文件成功下载保存后的步骤，推送自己完成的文件信息
-						innerFileChan <- &fileIndexPath{
-							FilePath: localDownloadFilePath,
-							Index:    sliceIndex,
-						}
-						innerDownloadWG.Done()
-						// 进度条增长
-						bar.IncrBy(MB50)
+					}(i, tempFileChan, downloadWG, realUrl, localDownloadFilePath, tempBar)
+				} else {
+					// 存在，成功跳过
+					// 执行文件成功下载保存后的步骤，推送自己完成的文件信息
+					tempFileChan <- &fileIndexPath{
+						FilePath: localDownloadFilePath,
+						Index:    i,
 					}
-				}(i, tempFileChan, downloadWG, realUrl, downloadInfo.Path, tempBar)
-				// 网络请求下载好后要收回下载并发信号量
-				<-limitChan
+					// 进度条增长
+					tempBar.IncrBy(MB50)
+					downloadWG.Done()
+				}
 			}
-			// 再下载最后一个文件，也是要控制并发地下载
-			limitChan <- struct{}{}
+
+			// 下载最后一个文件
 			downloadWG.Add(1)
-			go func(innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, baiduFilePath string, bar *mpb.Bar) {
-				// 先得到最终的碎片文件路径
-				localDownloadFilePath := fmt.Sprintf(".%s%d", strings.TrimPrefix(baiduFilePath, unusedPath), sliceNum)
-				// 如果碎片文件已存在，那么直接算作完成跳过
-				_, err = os.Stat(localDownloadFilePath)
-				if os.IsNotExist(err) {
-					time.Sleep(time.Second)
+			// 先得到最终的碎片文件路径
+			localDownloadFilePath := fmt.Sprintf(".%s%d", strings.TrimPrefix(downloadInfo.Path, unusedPath), sliceNum)
+			// 如果碎片文件已存在，那么直接算作完成跳过
+			_, err = os.Stat(localDownloadFilePath)
+			if os.IsNotExist(err) {
+				// 不存在，开启协程下载
+				limitChan <- struct{}{}
+				time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
+				go func(innerFileChan chan *fileIndexPath, innerDownloadWG *sync.WaitGroup, _url *url.URL, fileDownloadPath string, bar *mpb.Bar) {
 					header := http.Header{}
 					header.Set("User-Agent", "pan.baidu.com")
 					header.Set("Range", fmt.Sprintf("bytes=%v-%v", sliceNum*MB50, sliceNum*MB50+lastSize-1))
@@ -275,7 +279,8 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							continue
 						}
 						if resp.StatusCode != 206 {
-							fmt.Printf("状态码非 206\n")
+							bts, _ := io.ReadAll(resp.Body)
+							fmt.Printf("状态码非 206 %s\n", bts)
 							continue
 						}
 						defer resp.Body.Close()
@@ -284,7 +289,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							fmt.Printf("返回读取错误 ioReadAll\n")
 							continue
 						}
-						dir, _, err := DivideDirAndFile(localDownloadFilePath)
+						dir, _, err := DivideDirAndFile(fileDownloadPath)
 						if err != nil {
 							continue
 						}
@@ -292,13 +297,14 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							fmt.Printf("创建文件夹错误 mkdirAll\n")
 							continue
 						}
-						if err = os.WriteFile(localDownloadFilePath, respBytes, 0666); err != nil {
+						if err = os.WriteFile(fileDownloadPath, respBytes, 0666); err != nil {
 							fmt.Printf("写文件错误 osWriteFile\n")
 							continue
 						}
+						<-limitChan
 						// 保存好文件后，推送自己完成的文件信息
 						innerFileChan <- &fileIndexPath{
-							FilePath: localDownloadFilePath,
+							FilePath: fileDownloadPath,
 							Index:    int(sliceNum),
 						}
 						// 进度条增长
@@ -306,19 +312,18 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 						innerDownloadWG.Done()
 						break
 					}
-				} else {
-					// 存在，跳过
-					// 保存好文件后，推送自己完成的文件信息
-					innerFileChan <- &fileIndexPath{
-						FilePath: localDownloadFilePath,
-						Index:    int(sliceNum),
-					}
-					// 进度条增长
-					bar.IncrBy(int(lastSize))
-					innerDownloadWG.Done()
+				}(tempFileChan, downloadWG, realUrl, localDownloadFilePath, tempBar)
+			} else {
+				// 存在，成功跳过
+				// 保存好文件后，推送自己完成的文件信息
+				tempFileChan <- &fileIndexPath{
+					FilePath: localDownloadFilePath,
+					Index:    int(sliceNum),
 				}
-			}(tempFileChan, downloadWG, realUrl, downloadInfo.Path, tempBar)
-			<-limitChan
+				// 进度条增长
+				tempBar.IncrBy(int(lastSize))
+				downloadWG.Done()
+			}
 
 			// 这一步也不阻塞，因为还有下一个文件
 			go func(innerDownloadWG *sync.WaitGroup, innerChan chan *fileIndexPath) {
@@ -327,18 +332,17 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 				// 那么就可以关闭结果传输信道，让结果收集者知道传输完了
 				close(innerChan)
 			}(downloadWG, tempFileChan)
-
 		} else {
-			// 不分片，直接下
-			limitChan <- struct{}{}
-			go func(_url *url.URL, baiduFilePath string, bar *mpb.Bar, barWG *sync.WaitGroup, fileSize int64) {
-				// 把文件保存为一个文件
-				localDownloadFilePath := "." + strings.TrimPrefix(baiduFilePath, unusedPath)
-				// 如果碎片文件已存在，那么直接算作完成跳过
-				_, err = os.Stat(localDownloadFilePath)
-				if os.IsNotExist(err) {
-					// 不存在，继续
-					time.Sleep(time.Second)
+			// 小文件 不需要分片
+			// 把文件保存为一个文件
+			localDownloadFilePath := "." + strings.TrimPrefix(downloadInfo.Path, unusedPath)
+			// 如果碎片文件已存在，那么直接算作完成跳过
+			_, err = os.Stat(localDownloadFilePath)
+			if os.IsNotExist(err) {
+				// 不存在，协程下载
+				limitChan <- struct{}{}
+				time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
+				go func(_url *url.URL, fileDownloadPath string, bar *mpb.Bar, barWG *sync.WaitGroup, fileSize int64) {
 					header := http.Header{}
 					header.Set("User-Agent", "pan.baidu.com")
 					request := http.Request{
@@ -353,7 +357,8 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							continue
 						}
 						if resp.StatusCode != 206 {
-							fmt.Printf("状态码非 206 \n")
+							bts, _ := io.ReadAll(resp.Body)
+							fmt.Printf("状态码非 206 %s\n", bts)
 							continue
 						}
 						defer resp.Body.Close()
@@ -362,7 +367,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							fmt.Printf("返回读取错误 ioReadAll\n")
 							continue
 						}
-						dir, _, err := DivideDirAndFile(localDownloadFilePath)
+						dir, _, err := DivideDirAndFile(fileDownloadPath)
 						if err != nil {
 							continue
 						}
@@ -370,22 +375,22 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							fmt.Printf("创建文件夹错误 mkdirAll\n")
 							continue
 						}
-						if err = os.WriteFile(localDownloadFilePath, respBytes, 0666); err != nil {
+						if err = os.WriteFile(fileDownloadPath, respBytes, 0666); err != nil {
 							fmt.Printf("写文件错误 osWriteFile\n")
 							continue
 						}
+						<-limitChan
 						// 下载完成，进度条增长
 						bar.IncrBy(int(fileSize))
 						barWG.Done()
 						break
 					}
-				} else {
-					// 存在，跳过
-					bar.IncrBy(int(fileSize))
-					barWG.Done()
-				}
-			}(realUrl, downloadInfo.Path, tempBar, mpbWG, downloadInfo.Size)
-			<-limitChan
+				}(realUrl, downloadInfo.Path, tempBar, mpbWG, downloadInfo.Size)
+			} else {
+				// 存在，成功跳过
+				tempBar.IncrBy(int(downloadInfo.Size))
+				mpbWG.Done()
+			}
 		}
 	}
 	// 等待进度条都结束

@@ -78,6 +78,26 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 	mpbWG := &sync.WaitGroup{}
 	progressBars := mpb.New(mpb.WithWaitGroup(mpbWG))
 	for _, downloadInfo := range downloadInfos {
+
+		// 如果文件已存在，并且大小正确，那么就跳过
+		finalDownloadFilePath := fmt.Sprintf(".%s", strings.TrimPrefix(downloadInfo.Path, unusedPath))
+		finalFileInfo, err := os.Stat(finalDownloadFilePath)
+		if os.IsNotExist(err) {
+			// 不存在，不作为
+		} else {
+			// 存在
+			if finalFileInfo.Size() == downloadInfo.Size {
+				// 文件大小 ok，跳过
+				continue
+			} else {
+				// 文件不对，删除重新下
+				if err = os.Remove(finalDownloadFilePath); err != nil {
+					fmt.Printf("删除还没完全的文件错误: %v\n", err)
+					return err
+				}
+			}
+		}
+
 		// 如果文件太大，就下切片
 		var lastSize int64
 		var sliceNum int64

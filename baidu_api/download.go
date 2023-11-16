@@ -202,7 +202,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 								fmt.Printf("网络连接错误 clientDo\n")
 								continue
 							}
-							if resp.StatusCode != 206 {
+							if resp.StatusCode != 206 && resp.StatusCode != 200 {
 								bts, _ := io.ReadAll(resp.Body)
 								fmt.Printf("状态码非 206 %s\n", bts)
 								continue
@@ -278,7 +278,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							fmt.Printf("网络连接错误 clientDo\n")
 							continue
 						}
-						if resp.StatusCode != 206 {
+						if resp.StatusCode != 206 && resp.StatusCode != 200 {
 							bts, _ := io.ReadAll(resp.Body)
 							fmt.Printf("状态码非 206 %s\n", bts)
 							continue
@@ -356,7 +356,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							fmt.Printf("网络连接错误 clientDo\n")
 							continue
 						}
-						if resp.StatusCode != 206 {
+						if resp.StatusCode != 206 && resp.StatusCode != 200 {
 							bts, _ := io.ReadAll(resp.Body)
 							fmt.Printf("状态码非 206 %s\n", bts)
 							continue
@@ -385,7 +385,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 						barWG.Done()
 						break
 					}
-				}(realUrl, downloadInfo.Path, tempBar, mpbWG, downloadInfo.Size)
+				}(realUrl, localDownloadFilePath, tempBar, mpbWG, downloadInfo.Size)
 			} else {
 				// 存在，成功跳过
 				tempBar.IncrBy(int(downloadInfo.Size))

@@ -3,32 +3,26 @@ package upload
 import (
 	"baidu_tool/utils"
 	"bytes"
+	"crypto/tls"
 	"errors"
-	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 )
-
-type UploadArg struct {
-	UploadId  string `json:"uploadid"`
-	Path      string `json:"path"`
-	LocalFile string `json:"local_file"`
-	PartSeq   int    `json:"partseq"`
-}
 
 type UploadReturn struct {
 	Md5       string `json:"md5"`
 	RequestId int    `json:"request_id"`
 }
 
-func Upload(accessToken string, arg *UploadArg) (*UploadReturn, error) {
+func Upload(accessToken string, uploadId string, localFilePath string, partSeq int) (*UploadReturn, error) {
 	ret := &UploadReturn{}
 
 	//打开文件句柄操作
-	fileHandle, err := os.Open(arg.LocalFile)
+	fileHandle, err := os.Open(localFilePath)
 	if err != nil {
 		return ret, errors.New("superfile open file failed")
 	}
@@ -42,7 +36,7 @@ func Upload(accessToken string, arg *UploadArg) (*UploadReturn, error) {
 
 	// 读取文件块
 	buf := make([]byte, fileInfo.Size())
-	n, err := fileHandle.Read(buf)
+	_, err = fileHandle.Read(buf)
 	if err != nil {
 		if err != io.EOF {
 			return ret, err
@@ -55,7 +49,7 @@ func Upload(accessToken string, arg *UploadArg) (*UploadReturn, error) {
 	if err != nil {
 		return ret, err
 	}
-	_, err = io.Copy(fileWriter, bytes.NewReader(buf[0:n]))
+	_, err = io.Copy(fileWriter, bytes.NewReader(buf))
 	if err != nil {
 		return ret, err
 	}
@@ -64,21 +58,31 @@ func Upload(accessToken string, arg *UploadArg) (*UploadReturn, error) {
 	}
 	contentType := bodyWriter.FormDataContentType()
 
-	uri := "https://d.pcs.baidu.com/rest/2.0/pcs/superfile2?method=upload&access_token=%s&type=tmpfile&path=%suploadid=%s&partseq=%d"
-	realUrl, _ := url.Parse(fmt.Sprintf(uri, accessToken, arg.Path, arg.UploadId, arg.PartSeq))
+	uri := "https://d.pcs.baidu.com/rest/2.0/pcs/superfile2?method=upload&"
+
+	params := url.Values{}
+	params.Set("access_token", accessToken)
+	params.Set("path", "/apps/"+localFilePath)
+	params.Set("uploadid", uploadId)
+	params.Set("partseq", strconv.Itoa(partSeq))
+	uri += params.Encode()
 
 	header := http.Header{}
 	header.Set("Content-Type", contentType)
+	header.Set("Host", "d.pcs.baidu.com")
 
-	req := http.Request{
-		Method: "POST",
-		URL:    realUrl,
-		Header: header,
-		Body:   io.NopCloser(payload),
+	bts, err := io.ReadAll(payload)
+	req, err := http.NewRequest("POST", uri, bytes.NewBuffer(bts))
+
+	req.Header = header
+
+	client := http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+			MaxIdleConnsPerHost: -1,
+		},
 	}
-
-	client := http.Client{}
-	ret, err = utils.DoHttpRequest(ret, &client, &req)
+	ret, err = utils.DoHttpRequest(ret, &client, req)
 	if err != nil {
 		return ret, err
 	}

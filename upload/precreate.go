@@ -2,20 +2,15 @@ package upload
 
 import (
 	"baidu_tool/utils"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 )
-
-type PreCreateArg struct {
-	Path      string   `json:"path"`
-	Size      uint64   `json:"size"`
-	BlockList []string `json:"block_list"`
-}
 
 type PreCreateReturn struct {
 	Errno      int    `json:"errno"`
@@ -29,7 +24,7 @@ type PreCreateBody struct {
 	// 上传后使用的文件绝对路径，需要 url_encode
 	Path string `json:"path"`
 	// 文件和目录两种情况：上传文件时，表示文件的大小，单位 B；上传目录时，表示目录的大小，目录的话大小默认为 0
-	Size uint64 `json:"size"`
+	Size int64 `json:"size"`
 	// 否为目录，0 文件，1 目录
 	IsDir int `json:"isdir"`
 	// 文件各分片MD5数组的json串。
@@ -46,38 +41,47 @@ type PreCreateBody struct {
 	RType int `json:"rtype"`
 }
 
-func PreCreate(accessToken string, arg *PreCreateArg) (*PreCreateReturn, error) {
+// PreCreate 预上传
+// @param localFilePath 上传后使用的文件绝对路径，需要 url encode
+func PreCreate(accessToken string, localFilePath string) (*PreCreateReturn, []string, int64, error) {
 	ret := &PreCreateReturn{}
 
 	client := http.Client{}
-
 	uri := "https://pan.baidu.com/rest/2.0/xpan/file?method=precreate&access_token=%s"
 	realUrl, _ := url.Parse(fmt.Sprintf(uri, accessToken))
 
-	jsonBody, err := json.Marshal(PreCreateBody{
-		Path:      arg.Path,
-		Size:      arg.Size,
-		IsDir:     0,
-		BlockList: arg.BlockList,
-		AutoInit:  1,
-		RType:     1,
-	})
+	// md5
+	md5res, fileSize, err := utils.FileToMd5(localFilePath)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	// json body 参数
+	body := url.Values{}
+	body.Add("path", "/apps/"+localFilePath)
+	body.Add("size", strconv.FormatInt(fileSize/8, 10))
+	body.Add("isdir", "0")
+	blockListJson, _ := json.Marshal([]string{md5res})
+	body.Add("block_list", string(blockListJson))
+	body.Add("autoinit", "1")
+	body.Add("rtype", "2")
+
 	header := http.Header{}
 	header.Set("Content-Type", "application/x-www-form-urlencoded")
 	header.Set("User-Agent", "pan.baidu.com")
 	req := &http.Request{
-		Method: "Post",
+		Method: "POST",
 		URL:    realUrl,
 		Header: header,
-		Body:   io.NopCloser(bytes.NewReader(jsonBody)),
+		Body:   io.NopCloser(strings.NewReader(body.Encode())),
 	}
 
 	ret, err = utils.DoHttpRequest(ret, &client, req)
 	if err != nil {
-		return nil, err
+		return nil, nil, 0, err
 	}
 	if ret.Errno != 0 {
-		return nil, errors.New("call pre_create failed")
+		return nil, nil, 0, errors.New("call pre_create failed")
 	}
-	return ret, nil
+	return ret, []string{md5res}, fileSize, nil
 }

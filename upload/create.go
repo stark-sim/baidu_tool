@@ -2,7 +2,6 @@ package upload
 
 import (
 	"baidu_tool/utils"
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 )
 
 type CreateParam struct {
@@ -39,23 +39,23 @@ func Create(accessToken string, path string, size int64, blockList []string, Upl
 	header.Set("Content-Type", "application/x-www-form-urlencoded")
 	header.Set("User-Agent", "pan.baidu.com")
 
-	jsonBody, err := json.Marshal(CreateParam{
-		Path:      path,
-		Size:      strconv.FormatInt(size, 10),
-		IsDir:     "0",
-		BlockList: blockList,
-		UploadId:  UploadId,
-		RType:     2,
-	})
+	body := url.Values{}
+	body.Add("path", "/apps/"+path)
+	body.Add("size", strconv.FormatInt(size, 10))
+	body.Add("isdir", "0")
+	bts, _ := json.Marshal(blockList)
+	body.Add("block_list", string(bts))
+	body.Add("uploadid", UploadId)
+	body.Add("rtype", "2")
 
 	req := http.Request{
 		Method: "POST",
 		URL:    realUrl,
 		Header: header,
-		Body:   io.NopCloser(bytes.NewReader(jsonBody)),
+		Body:   io.NopCloser(strings.NewReader(body.Encode())),
 	}
 
-	ret, err = utils.DoHttpRequest(ret, &http.Client{}, &req)
+	ret, err := utils.DoHttpRequest(ret, &http.Client{}, &req)
 	if err != nil {
 		return ret, err
 	}

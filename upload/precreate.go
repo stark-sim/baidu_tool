@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -43,25 +44,49 @@ type PreCreateBody struct {
 
 // PreCreate 预上传
 // @param localFilePath 上传后使用的文件绝对路径，需要 url encode
-func PreCreate(accessToken string, localFilePath string) (*PreCreateReturn, []string, int64, error) {
-	ret := &PreCreateReturn{}
+func PreCreate(accessToken string, localFilePath string) (ret *PreCreateReturn, slicedFilePaths []string, blockList []string, fileSize int64, err error) {
+	// 准备返回体，第一步
+	ret = &PreCreateReturn{}
+
+	// 检查文件大小
+	fileInfo, err := os.Stat(localFilePath)
+	if err != nil {
+		return
+	}
+	fileSize = fileInfo.Size()
+	// 超级会员单文件限制
+	if fileSize > utils.MaxSingleFileSize {
+		err = errors.New(fmt.Sprintf("file %s too big, not can do", localFilePath))
+		return
+	}
+
+	if fileSize > utils.ChunkSize {
+		// 需要分块
+		slicedFilePaths, blockList, err = utils.SliceFile(localFilePath)
+		if err != nil {
+			return
+		}
+	} else {
+		// md5
+		var md5Res string
+		md5Res, err = utils.FileToMd5(localFilePath)
+		if err != nil {
+			return
+		}
+		slicedFilePaths = append(slicedFilePaths, localFilePath)
+		blockList = append(blockList, md5Res)
+	}
 
 	client := http.Client{}
 	uri := "https://pan.baidu.com/rest/2.0/xpan/file?method=precreate&access_token=%s"
 	realUrl, _ := url.Parse(fmt.Sprintf(uri, accessToken))
-
-	// md5
-	md5res, fileSize, err := utils.FileToMd5(localFilePath)
-	if err != nil {
-		return nil, nil, 0, err
-	}
 
 	// json body 参数
 	body := url.Values{}
 	body.Add("path", "/apps/"+localFilePath)
 	body.Add("size", strconv.FormatInt(fileSize/8, 10))
 	body.Add("isdir", "0")
-	blockListJson, _ := json.Marshal([]string{md5res})
+	blockListJson, _ := json.Marshal(blockList)
 	body.Add("block_list", string(blockListJson))
 	body.Add("autoinit", "1")
 	body.Add("rtype", "2")
@@ -78,10 +103,10 @@ func PreCreate(accessToken string, localFilePath string) (*PreCreateReturn, []st
 
 	ret, err = utils.DoHttpRequest(ret, &client, req)
 	if err != nil {
-		return nil, nil, 0, err
+		return
 	}
 	if ret.Errno != 0 {
-		return nil, nil, 0, errors.New("call pre_create failed")
+		return
 	}
-	return ret, []string{md5res}, fileSize, nil
+	return
 }

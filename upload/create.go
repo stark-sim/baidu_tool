@@ -41,7 +41,7 @@ func Create(accessToken string, path string, size int64, blockList []string, Upl
 
 	body := url.Values{}
 	body.Add("path", "/apps/"+path)
-	body.Add("size", strconv.FormatInt(size, 10))
+	body.Add("size", strconv.FormatInt(size/8, 10))
 	body.Add("isdir", "0")
 	bts, _ := json.Marshal(blockList)
 	body.Add("block_list", string(bts))

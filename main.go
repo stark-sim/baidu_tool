@@ -5,6 +5,7 @@ import (
 	"baidu_tool/upload"
 	"flag"
 	"fmt"
+	"sync"
 )
 
 func main() {
@@ -76,18 +77,33 @@ func main() {
 			}
 		}
 	} else {
-		filePath := "./main.go"
 		// 上传
-		preCreateReturn, blockList, fileSize, err := upload.PreCreate(input.AccessToken, filePath)
+		preCreateReturn, slicedFilePaths, blockList, fileSize, err := upload.PreCreate(input.AccessToken, input.Path)
 		if err != nil {
+			fmt.Printf("%v\n", err)
 			return
 		}
-		_, err = upload.Upload(input.AccessToken, preCreateReturn.UploadId, filePath, 0)
-		if err != nil {
-			return
+		wg := &sync.WaitGroup{}
+		limitChan := make(chan struct{}, 10)
+		for i, slicedFilePath := range slicedFilePaths {
+			limitChan <- struct{}{}
+			wg.Add(1)
+			go func(filePath string, index int) {
+				_, err = upload.Upload(input.AccessToken, preCreateReturn.UploadId, filePath, index)
+				if err != nil {
+					fmt.Printf("%v\n", err)
+					return
+				}
+				<-limitChan
+				wg.Done()
+				fmt.Printf("upload %d\n", index)
+			}(slicedFilePath, i)
 		}
-		_, err = upload.Create(input.AccessToken, filePath, fileSize, blockList, preCreateReturn.UploadId)
+		wg.Wait()
+
+		_, err = upload.Create(input.AccessToken, input.Path, fileSize, blockList, preCreateReturn.UploadId)
 		if err != nil {
+			fmt.Printf("%v\n", err)
 			return
 		}
 	}

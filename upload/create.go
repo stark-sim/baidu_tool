@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type CreateParam struct {
@@ -26,7 +27,7 @@ type CreateReturn struct {
 	Path  string `json:"path"`
 }
 
-func Create(accessToken string, path string, size int64, blockList []string, UploadId string) (*CreateReturn, error) {
+func Create(accessToken string, baiduFilePath string, size int64, blockList []string, UploadId string) (*CreateReturn, error) {
 	ret := &CreateReturn{}
 
 	protocal := "https"
@@ -40,8 +41,8 @@ func Create(accessToken string, path string, size int64, blockList []string, Upl
 	header.Set("User-Agent", "pan.baidu.com")
 
 	body := url.Values{}
-	body.Add("path", "/apps/"+path)
-	body.Add("size", strconv.FormatInt(size/8, 10))
+	body.Add("path", baiduFilePath)
+	body.Add("size", strconv.FormatInt(size, 10))
 	body.Add("isdir", "0")
 	bts, _ := json.Marshal(blockList)
 	body.Add("block_list", string(bts))
@@ -55,12 +56,18 @@ func Create(accessToken string, path string, size int64, blockList []string, Upl
 		Body:   io.NopCloser(strings.NewReader(body.Encode())),
 	}
 
-	ret, err := utils.DoHttpRequest(ret, &http.Client{}, &req)
-	if err != nil {
-		return ret, err
+	var err error
+	for i := 0; i < 3; i++ {
+		ret, err = utils.DoHttpRequest(ret, &http.Client{}, &req)
+		if err != nil {
+			time.Sleep(time.Second)
+			continue
+		}
+		break
 	}
 
 	if ret.Errno != 0 {
+		fmt.Printf("%+v\n", ret)
 		return ret, errors.New("call create failed")
 	}
 	return ret, nil

@@ -44,7 +44,7 @@ type PreCreateBody struct {
 
 // PreCreate 预上传
 // @param localFilePath 上传后使用的文件绝对路径，需要 url encode
-func PreCreate(accessToken string, localFilePath string) (ret *PreCreateReturn, slicedFilePaths []string, blockList []string, fileSize int64, err error) {
+func PreCreate(accessToken string, localFilePath string, prefixPath string) (ret *PreCreateReturn, baiduFilePath string, blockList []string, fileSize int64, err error) {
 	// 准备返回体，第一步
 	ret = &PreCreateReturn{}
 
@@ -62,7 +62,7 @@ func PreCreate(accessToken string, localFilePath string) (ret *PreCreateReturn, 
 
 	if fileSize > utils.ChunkSize {
 		// 需要分块
-		slicedFilePaths, blockList, err = utils.SliceFile(localFilePath)
+		blockList, err = utils.SliceFileNotSave(localFilePath)
 		if err != nil {
 			return
 		}
@@ -73,7 +73,6 @@ func PreCreate(accessToken string, localFilePath string) (ret *PreCreateReturn, 
 		if err != nil {
 			return
 		}
-		slicedFilePaths = append(slicedFilePaths, localFilePath)
 		blockList = append(blockList, md5Res)
 	}
 
@@ -83,8 +82,19 @@ func PreCreate(accessToken string, localFilePath string) (ret *PreCreateReturn, 
 
 	// json body 参数
 	body := url.Values{}
-	body.Add("path", "/apps/"+localFilePath)
-	body.Add("size", strconv.FormatInt(fileSize/8, 10))
+	// 拼接出最终的百度存储地址
+	baiduPath := strings.Builder{}
+	baiduPath.WriteString("/apps")
+	if prefixPath != "" {
+		baiduPath.WriteString("/")
+		baiduPath.WriteString(prefixPath)
+	}
+	baiduPath.WriteString("/")
+	baiduPath.WriteString(localFilePath)
+	baiduFilePath = baiduPath.String()
+	// 准备 body 参数
+	body.Add("path", baiduPath.String())
+	body.Add("size", strconv.FormatInt(fileSize, 10))
 	body.Add("isdir", "0")
 	blockListJson, _ := json.Marshal(blockList)
 	body.Add("block_list", string(blockListJson))
@@ -101,10 +111,14 @@ func PreCreate(accessToken string, localFilePath string) (ret *PreCreateReturn, 
 		Body:   io.NopCloser(strings.NewReader(body.Encode())),
 	}
 
-	ret, err = utils.DoHttpRequest(ret, &client, req)
-	if err != nil {
-		return
+	for i := 0; i < 3; i++ {
+		ret, err = utils.DoHttpRequest(ret, &client, req)
+		if err != nil {
+			continue
+		}
+		break
 	}
+
 	if ret.Errno != 0 {
 		return
 	}

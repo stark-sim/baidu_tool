@@ -1,6 +1,7 @@
 package baidu_api
 
 import (
+	"baidu_tool/utils"
 	"encoding/json"
 	"fmt"
 	"github.com/vbauerster/mpb"
@@ -233,7 +234,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 								fmt.Printf("返回读取错误 ioReadAll\n")
 								continue
 							}
-							dir, _, err := DivideDirAndFile(fileDownloadPath)
+							dir, _, err := utils.DivideDirAndFile(fileDownloadPath)
 							if err != nil {
 								continue
 							}
@@ -309,7 +310,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							fmt.Printf("返回读取错误 ioReadAll\n")
 							continue
 						}
-						dir, _, err := DivideDirAndFile(fileDownloadPath)
+						dir, _, err := utils.DivideDirAndFile(fileDownloadPath)
 						if err != nil {
 							continue
 						}
@@ -387,7 +388,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 							fmt.Printf("返回读取错误 ioReadAll\n")
 							continue
 						}
-						dir, _, err := DivideDirAndFile(fileDownloadPath)
+						dir, _, err := utils.DivideDirAndFile(fileDownloadPath)
 						if err != nil {
 							continue
 						}

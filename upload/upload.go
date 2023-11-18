@@ -9,39 +9,16 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 )
 
-type UploadReturn struct {
+type SingleUploadReturn struct {
 	Md5       string `json:"md5"`
 	RequestId int    `json:"request_id"`
 }
 
-func Upload(accessToken string, uploadId string, localFilePath string, partSeq int) (*UploadReturn, error) {
-	ret := &UploadReturn{}
-
-	//打开文件句柄操作
-	fileHandle, err := os.Open(localFilePath)
-	if err != nil {
-		return ret, errors.New("superfile open file failed")
-	}
-	defer fileHandle.Close()
-
-	// 获取文件当前信息
-	fileInfo, err := fileHandle.Stat()
-	if err != nil {
-		return ret, err
-	}
-
-	// 读取文件块
-	buf := make([]byte, fileInfo.Size())
-	_, err = fileHandle.Read(buf)
-	if err != nil {
-		if err != io.EOF {
-			return ret, err
-		}
-	}
+func SingleUpload(accessToken string, uploadId string, baiduFilePath string, FileBytes []byte, partSeq int) (*SingleUploadReturn, error) {
+	ret := new(SingleUploadReturn)
 
 	payload := &bytes.Buffer{}
 	bodyWriter := multipart.NewWriter(payload)
@@ -49,7 +26,7 @@ func Upload(accessToken string, uploadId string, localFilePath string, partSeq i
 	if err != nil {
 		return ret, err
 	}
-	_, err = io.Copy(fileWriter, bytes.NewReader(buf))
+	_, err = io.Copy(fileWriter, bytes.NewReader(FileBytes))
 	if err != nil {
 		return ret, err
 	}
@@ -62,7 +39,7 @@ func Upload(accessToken string, uploadId string, localFilePath string, partSeq i
 
 	params := url.Values{}
 	params.Set("access_token", accessToken)
-	params.Set("path", "/apps/"+localFilePath)
+	params.Set("path", baiduFilePath)
 	params.Set("uploadid", uploadId)
 	params.Set("partseq", strconv.Itoa(partSeq))
 	uri += params.Encode()
@@ -82,9 +59,13 @@ func Upload(accessToken string, uploadId string, localFilePath string, partSeq i
 			MaxIdleConnsPerHost: -1,
 		},
 	}
-	ret, err = utils.DoHttpRequest(ret, &client, req)
-	if err != nil {
-		return ret, err
+
+	for i := 0; i < 3; i++ {
+		ret, err = utils.DoHttpRequest(ret, &client, req)
+		if err != nil {
+			continue
+		}
+		break
 	}
 
 	if ret.Md5 == "" {

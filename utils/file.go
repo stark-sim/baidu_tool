@@ -1,17 +1,49 @@
 package utils
 
 import (
-	"baidu_tool/baidu_api"
 	"crypto/md5"
 	"fmt"
 	"log"
 	"os"
+	"strings"
 )
 
 const MaxSingleFileSize int64 = 20 * 1024 * 1024 * 1024
 const ChunkSize int64 = 4 * 1024 * 1024
 
-func SliceFile(localFilePath string) (slicedFilePaths []string, blockList []string, err error) {
+// GetFilePathListFromLocalPath 列表形式返回文件或者文件夹下所有文件的路径
+func GetFilePathListFromLocalPath(localFileOrDirPath string) ([]string, error) {
+	var filePathList []string
+	fileInfo, err := os.Stat(localFileOrDirPath)
+	if err != nil {
+		return nil, err
+	}
+	if fileInfo.IsDir() {
+		children, err := os.ReadDir(localFileOrDirPath)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range children {
+			childrenFilePathList, err := GetFilePathListFromLocalPath(localFileOrDirPath + "/" + item.Name())
+			if err != nil {
+				return nil, err
+			}
+			filePathList = append(filePathList, childrenFilePathList...)
+		}
+	} else {
+		// 文件就进入结果
+		filePathList = append(filePathList, localFileOrDirPath)
+	}
+	return filePathList, nil
+}
+
+type SlicedFileByte struct {
+	Index int
+	Bytes []byte
+}
+
+// SliceFilePushToChan 把文件一块块切割后推入给好的 channel，所以要使用协程来运行该函数
+func SliceFilePushToChan(localFilePath string, slicedFileByteChan chan *SlicedFileByte) (err error) {
 	// Try to read the file
 	file, err := os.Open(localFilePath)
 	if err != nil {
@@ -19,7 +51,95 @@ func SliceFile(localFilePath string) (slicedFilePaths []string, blockList []stri
 	}
 	defer file.Close()
 
-	dir, _, err := baidu_api.DivideDirAndFile(localFilePath)
+	fileInfo, err := os.Stat(localFilePath)
+	if err != nil {
+		return
+	}
+	fullFileSize := fileInfo.Size()
+	sliceFileNum := fullFileSize / ChunkSize
+	lastSize := fullFileSize % ChunkSize
+	// 不能整除，意味着还有一个碎文件
+	if lastSize != 0 {
+		sliceFileNum++
+	}
+
+	// 文件坑位为分快大小
+	for i := int64(0); i < sliceFileNum; i++ {
+		b := make([]byte, ChunkSize)
+		// 最后一个文件的 bytes 坑位切换成大小
+		if i == sliceFileNum-1 {
+			b = make([]byte, lastSize)
+		}
+
+		// 读取分块字节
+		if _, err = file.Read(b); err != nil {
+			return
+		}
+
+		// 准备输出
+		slicedFileByte := new(SlicedFileByte)
+		slicedFileByte.Bytes = b
+		slicedFileByte.Index = int(i)
+
+		slicedFileByteChan <- slicedFileByte
+	}
+
+	// 发送完毕后，由发送端关闭信道
+	close(slicedFileByteChan)
+
+	return nil
+}
+
+// SliceFileNotSave 分片不保存，省空间，只提供 碎片文件的 md5 列表，为百度 preCreate 接口服务
+func SliceFileNotSave(localFilePath string) (md5List []string, err error) {
+	// Try to read the file
+	file, err := os.Open(localFilePath)
+	if err != nil {
+		log.Fatal("error trying to open the file specified:", err)
+	}
+	defer file.Close()
+
+	fileInfo, err := os.Stat(localFilePath)
+	if err != nil {
+		return
+	}
+	fullFileSize := fileInfo.Size()
+	sliceFileNum := fullFileSize / ChunkSize
+	lastSize := fullFileSize % ChunkSize
+	// 不能整除，意味着还有一个碎文件
+	if lastSize != 0 {
+		sliceFileNum++
+	}
+
+	// 文件坑位为分快大小
+	b := make([]byte, ChunkSize)
+	for i := int64(0); i < sliceFileNum; i++ {
+		// 最后一个文件的 bytes 坑位切换成大小
+		if i == sliceFileNum-1 {
+			b = make([]byte, lastSize)
+		}
+
+		// 读取分块字节
+		if _, err = file.Read(b); err != nil {
+			return
+		}
+
+		// 切分时记录文件的信息
+		md5List = append(md5List, fmt.Sprintf("%x", md5.Sum(b)))
+	}
+	return
+}
+
+// SliceFileAndSave 分片并保存碎片文件方案
+func SliceFileAndSave(localFilePath string) (slicedFilePaths []string, blockList []string, err error) {
+	// Try to read the file
+	file, err := os.Open(localFilePath)
+	if err != nil {
+		log.Fatal("error trying to open the file specified:", err)
+	}
+	defer file.Close()
+
+	dir, _, err := DivideDirAndFile(localFilePath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -87,4 +207,18 @@ func SliceFile(localFilePath string) (slicedFilePaths []string, blockList []stri
 	}
 
 	return slicedFilePaths, blockList, nil
+}
+
+// DivideDirAndFile 分离文件路径中的 / 来找出文件夹和文件名
+func DivideDirAndFile(filePath string) (dir string, file string, err error) {
+	// 如果最后一个字符是 / ，则相当于最后一个 / 没有意义，可以去掉
+	if filePath[len(filePath)-1] == '/' {
+		filePath = filePath[:len(filePath)-1]
+	}
+	// 再开始从尾找第一个 /
+	lastIndex := strings.LastIndex(filePath, "/")
+	if lastIndex == -1 {
+		return "", "", fmt.Errorf("not found /")
+	}
+	return filePath[:lastIndex], filePath[lastIndex+1:], nil
 }

@@ -125,6 +125,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 					"done",
 				),
 			),
+			mpb.BarRemoveOnComplete(),
 		)
 
 		// 准备下载请求

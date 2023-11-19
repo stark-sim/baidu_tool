@@ -24,7 +24,11 @@ func UploadFileOrDir(accessToken string, localFilePath string, baiduPrefixPath s
 		return err
 	}
 	// 预上传后有了文件大小，开启一个进度条
-	bar := progress.AddBar(fileSize, mpb.PrependDecorators(decor.Name(baiduFilePath)))
+	bar := progress.AddBar(
+		fileSize,
+		mpb.PrependDecorators(decor.Name(baiduFilePath)),
+		mpb.BarRemoveOnComplete(),
+	)
 
 	// 上传过程，再次切文件，但这次最多同时保留进程数量的 字节段 在内存中（不需要保存文件）
 	maxConcurrentCount := min(16, runtime.NumCPU())

@@ -93,10 +93,10 @@ func main() {
 		}
 		// 多个文件的上传共用一个 mpb 进度
 		progress := mpb.New()
-		for _, filePath := range filePathList {
-			if err = baidu_api.UploadFileOrDir(input.AccessToken, filePath, baiduPrefixPath, progress); err != nil {
-				return
-			}
+
+		if err = baidu_api.UploadFileOrDir(input.AccessToken, filePathList, baiduPrefixPath, progress); err != nil {
+			return
 		}
+
 	}
 }

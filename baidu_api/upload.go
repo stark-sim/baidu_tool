@@ -3,7 +3,6 @@ package baidu_api
 import (
 	"baidu_tool/upload"
 	"baidu_tool/utils"
-	"fmt"
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
 	"log"
@@ -13,60 +12,93 @@ import (
 	"time"
 )
 
+type PreFileInfo struct {
+	PreCreateReturn     *upload.PreCreateReturn
+	BaiduFilePath       string
+	BlockList           []string
+	FileSize            int64
+	SlicedFileBytesChan chan *utils.SlicedFileByte
+	Bar                 *mpb.Bar
+}
+
 // UploadFileOrDir 上传文件或者文件夹
 // @param localFilePath 要上传的文件或文件夹的相对位置或绝对位置
 // @param baiduPrefixPath 上传后在网盘内的 我的应用数据/baiduPrefixPath/localFilePath 如果没传就在 我的应用数据/localFilePath
-func UploadFileOrDir(accessToken string, localFilePath string, baiduPrefixPath string, progress *mpb.Progress) error {
-	// 预上传，不保存文件
-	preCreateReturn, baiduFilePath, blockList, fileSize, err := upload.PreCreate(accessToken, localFilePath, baiduPrefixPath)
-	if err != nil {
-		log.Printf("%v\n", err)
-		return err
-	}
-	// 预上传后有了文件大小，开启一个进度条
-	bar := progress.AddBar(
-		fileSize,
-		mpb.PrependDecorators(decor.Name(baiduFilePath)),
-		mpb.BarRemoveOnComplete(),
-	)
-
+func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPath string, progress *mpb.Progress) error {
 	// 上传过程，再次切文件，但这次最多同时保留进程数量的 字节段 在内存中（不需要保存文件）
 	maxConcurrentCount := min(16, runtime.NumCPU())
 	// 该信道控制上传协程并发量
 	limitChan := make(chan struct{}, maxConcurrentCount)
 	defer close(limitChan)
-	// 该信道为切片文件字节传输信道，只需要单长度即可，不然没得传，切多了也浪费空间，由发送端关闭
-	slicedFileBytesChan := make(chan *utils.SlicedFileByte)
-	go func() {
-		if err = utils.SliceFilePushToChan(localFilePath, slicedFileBytesChan); err != nil {
-			return
-		}
-	}()
+	// 该管道控制预上传文件信息
+	PreFileInfoChan := make(chan *PreFileInfo, 2)
 
-	// 一旦文件切完，文件传输信道就会关闭，但碎片上传还未结束，所以需要上传协程的同步量
-	uploadWaitGroup := &sync.WaitGroup{}
-	for slicedFileByte := range slicedFileBytesChan {
-		limitChan <- struct{}{}
-		// 协程上传时需要缓一缓，不然容易被百度关掉
-		time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
-		uploadWaitGroup.Add(1)
-		go func(fileBytes *utils.SlicedFileByte) {
-			if _, err = upload.SingleUpload(accessToken, preCreateReturn.UploadId, baiduFilePath, fileBytes.Bytes, fileBytes.Index); err != nil {
-				return
+	closeChan := make(chan struct{})
+
+	// 使用协程进行文件预上传以及切片
+	for _, localFilePath := range localFilePaths {
+		go func(localFilePath string) {
+			// 预上传，不保存文件
+			var preFileInfo PreFileInfo
+			var err error
+			preFileInfo.PreCreateReturn, preFileInfo.BaiduFilePath, preFileInfo.BlockList, preFileInfo.FileSize, err = upload.PreCreate(accessToken, localFilePath, baiduPrefixPath)
+			if err != nil {
+				log.Printf("%v\n", err)
+				close(closeChan)
 			}
-			<-limitChan
-			bar.IncrBy(int(utils.ChunkSize))
-			uploadWaitGroup.Done()
-		}(slicedFileByte)
+			// 预上传后有了文件大小，开启一个进度条
+			preFileInfo.Bar = progress.AddBar(
+				preFileInfo.FileSize,
+				mpb.PrependDecorators(decor.Name(preFileInfo.BaiduFilePath)),
+				mpb.BarRemoveOnComplete(),
+			)
+			preFileInfo.SlicedFileBytesChan = make(chan *utils.SlicedFileByte)
+			PreFileInfoChan <- &preFileInfo
+			if err := utils.SliceFilePushToChan(localFilePath, preFileInfo.SlicedFileBytesChan); err != nil {
+				log.Printf("err: %+v", err)
+				close(closeChan)
+			}
+
+		}(localFilePath)
 	}
-	uploadWaitGroup.Wait()
-	// 上传完成后，才可以进行 create 操作
-	_, err = upload.Create(accessToken, baiduFilePath, fileSize, blockList, preCreateReturn.UploadId)
-	if err != nil {
-		fmt.Printf("%v\n", err)
-		return err
+	uploadWaitGroup := &sync.WaitGroup{}
+	var CreatedNum int
+	for {
+		select {
+		case <-closeChan:
+			return nil
+
+		case preFileInfo := <-PreFileInfoChan:
+			go func(preFileInfo *PreFileInfo) {
+				for slicedFileByte := range preFileInfo.SlicedFileBytesChan {
+					limitChan <- struct{}{}
+					time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
+					uploadWaitGroup.Add(1)
+					go func(fileBytes *utils.SlicedFileByte) {
+						if _, err := upload.SingleUpload(accessToken, preFileInfo.PreCreateReturn.UploadId, preFileInfo.BaiduFilePath, fileBytes.Bytes, fileBytes.Index); err != nil {
+							close(closeChan)
+							return
+						}
+						<-limitChan
+						preFileInfo.Bar.IncrBy(int(utils.ChunkSize))
+						uploadWaitGroup.Done()
+					}(slicedFileByte)
+				}
+				uploadWaitGroup.Wait()
+				_, err := upload.Create(accessToken, preFileInfo.BaiduFilePath, preFileInfo.FileSize, preFileInfo.BlockList, preFileInfo.PreCreateReturn.UploadId)
+				if err != nil {
+					log.Printf("err: %v\n", err)
+					close(closeChan)
+				}
+				// fixme: 当所有的文件上传结束，那么就标志着传输结束，那么就结束程序
+				CreatedNum++
+				if CreatedNum == len(localFilePaths) {
+					close(closeChan)
+				}
+			}(preFileInfo)
+		}
 	}
-	return nil
+
 }
 
 // ParseBaiduPrefixPath 处理传入的百度前缀地址，去除首尾可能存在的 '/'

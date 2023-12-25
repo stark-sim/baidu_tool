@@ -44,7 +44,7 @@ type PreCreateBody struct {
 
 // PreCreate 预上传
 // @param localFilePath 上传后使用的文件绝对路径，需要 url encode
-func PreCreate(accessToken string, localFilePath string, prefixPath string) (ret *PreCreateReturn, baiduFilePath string, blockList []string, fileSize int64, err error) {
+func PreCreate(accessToken string, localFilePath string, prefixPath string, sequence int) (ret *PreCreateReturn, baiduFilePath string, blockList []string, fileSize int64, err error) {
 	// 准备返回体，第一步
 	ret = &PreCreateReturn{}
 

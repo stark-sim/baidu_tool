@@ -43,7 +43,7 @@ type SlicedFileByte struct {
 }
 
 // SliceFilePushToChan 把文件一块块切割后推入给好的 channel，所以要使用协程来运行该函数
-func SliceFilePushToChan(localFilePath string, slicedFileByteChan chan *SlicedFileByte) (err error) {
+func SliceFilePushToChan(localFilePath string, slicedFileByteChan chan *SlicedFileByte, sequence uint) (err error) {
 	// Try to read the file
 	file, err := os.Open(localFilePath)
 	if err != nil {
@@ -63,7 +63,7 @@ func SliceFilePushToChan(localFilePath string, slicedFileByteChan chan *SlicedFi
 		sliceFileNum++
 	}
 
-	// 文件坑位为分快大小
+	// 文件坑位为分块大小
 	for i := int64(0); i < sliceFileNum; i++ {
 		b := make([]byte, ChunkSize)
 		// 最后一个文件的 bytes 坑位切换成大小

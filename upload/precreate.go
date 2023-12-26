@@ -3,7 +3,6 @@ package upload
 import (
 	"baidu_tool/utils"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -54,26 +53,40 @@ func PreCreate(accessToken string, localFilePath string, prefixPath string, sequ
 		return
 	}
 	fileSize = fileInfo.Size()
-	// 超级会员单文件限制
-	if fileSize > utils.MaxSingleFileSize {
-		err = errors.New(fmt.Sprintf("file %s too big, not can do", localFilePath))
-		return
-	}
 
-	if fileSize > utils.ChunkSize {
-		// 需要分块
-		blockList, err = utils.SliceFileNotSave(localFilePath)
+	// 大文件分 20GB 小文件后预上传
+	if sequence != 0 {
+		// 计算当前要预上传的文件有多大
+		if int(fileSize/utils.MaxSingleFileSize) == sequence-1 {
+			// 这是最后一个文件，并且是不足 20GB 的文件，如果最后一个文件是 20GB 的话，没有这么大的 seq
+			fileSize = fileSize % utils.MaxSingleFileSize
+		} else {
+			// 不是最后一个文件或者是最后一个文件且 20GB，所以文件大小一定是 20GB
+			fileSize = utils.MaxSingleFileSize
+		}
+
+		// 开始获取分块文件的 md5
+		blockList, err = utils.SliceFileNotSave(localFilePath, sequence, fileSize)
 		if err != nil {
 			return
 		}
 	} else {
-		// md5
-		var md5Res string
-		md5Res, err = utils.FileToMd5(localFilePath)
-		if err != nil {
-			return
+		// 低于 20GB 文件预上传
+		if fileSize > utils.ChunkSize {
+			// 需要分块
+			blockList, err = utils.SliceFileNotSave(localFilePath, 0, 0)
+			if err != nil {
+				return
+			}
+		} else {
+			// md5
+			var md5Res string
+			md5Res, err = utils.FileToMd5(localFilePath)
+			if err != nil {
+				return
+			}
+			blockList = append(blockList, md5Res)
 		}
-		blockList = append(blockList, md5Res)
 	}
 
 	client := http.Client{}
@@ -91,6 +104,10 @@ func PreCreate(accessToken string, localFilePath string, prefixPath string, sequ
 	}
 	baiduPath.WriteString("/")
 	baiduPath.WriteString(localFilePath)
+	// 大文件用文件夹存储
+	if sequence != 0 {
+		baiduPath.WriteString(fmt.Sprintf("/%d", sequence))
+	}
 	baiduFilePath = baiduPath.String()
 	// 准备 body 参数
 	body.Add("path", baiduPath.String())

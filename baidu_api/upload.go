@@ -52,8 +52,6 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 				fileSize := fileInfo.Size()
 				// 超级会员单文件限制
 				if fileSize > utils.MaxSingleFileSize {
-					// 分成多个文件来上传
-					var preFileInfoList []*FileInfo
 					// 分成的文件数量
 					var fileNum int
 					if fileSize%utils.MaxSingleFileSize != 0 {
@@ -77,9 +75,15 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 						)
 						// 预上传接口调用成功后，这个文件接下来会被开始上传，与此同时就该启动 文件切片传输字节信道 来呼应接下来的上传
 						tempFileInfo.SlicedFileBytesChan = make(chan *utils.SlicedFileByte)
-						// 当前该文件信息已经完成好上传前所有准备工作，可以推送给上传文件信道
-						uploadFileInfoChan <- &tempFileInfo
-						// 推送好后，
+						go func(fileInfo *FileInfo, sequence int) {
+							// 当前该文件信息已经完成好上传前所有准备工作，可以推送给上传文件信道
+							uploadFileInfoChan <- fileInfo
+							// 推送到上传信道好后，可以开始传输切片
+							if err = utils.SliceFilePushToChan(localFilePath, fileInfo.SlicedFileBytesChan, sequence); err != nil {
+								log.Printf("sliceFilePushToChan err: %v", err)
+								close(closeChan)
+							}
+						}(&tempFileInfo, i)
 					}
 				} else {
 					// 单文件开始预上传
@@ -97,59 +101,79 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 						mpb.BarRemoveOnComplete(),
 					)
 					preFileInfo.SlicedFileBytesChan = make(chan *utils.SlicedFileByte)
-					preFileInfoChan <- &preFileInfo
+					// 由于低于 20G 的文件本身只用一个文件信息，并且当前处于独享协程中，所以不需要再开启协程来执行推送切片操作
+					uploadFileInfoChan <- &preFileInfo
 					if err := utils.SliceFilePushToChan(localFilePath, preFileInfo.SlicedFileBytesChan, 0); err != nil {
 						log.Printf("err: %+v", err)
 						close(closeChan)
 					}
 				}
-
 			}(localFilePath)
 		}
 	}()
 
+	// 上传阶段才会知道实际要上传的文件数量
+	allUploadFileWG := &sync.WaitGroup{}
 	// 做上传碎片文件的协程
 	go func() {
-
+		for {
+			select {
+			case <-closeChan:
+				return
+			case uploadFileInfo := <-uploadFileInfoChan:
+				// 多一个要上传的文件
+				allUploadFileWG.Add(1)
+				go func(fileInfo *FileInfo) {
+					// 该文件的碎片上传 wg 同步控制，
+					uploadWaitGroup := &sync.WaitGroup{}
+					for slicedFileByte := range fileInfo.SlicedFileBytesChan {
+						limitChan <- struct{}{}
+						time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
+						uploadWaitGroup.Add(1)
+						go func(fileBytes *utils.SlicedFileByte) {
+							if _, err := upload.SingleUpload(accessToken, fileInfo.PreCreateReturn.UploadId, fileInfo.BaiduFilePath, fileBytes.Bytes, fileBytes.Index); err != nil {
+								close(closeChan)
+								return
+							}
+							<-limitChan
+							fileInfo.Bar.IncrBy(int(utils.ChunkSize))
+							uploadWaitGroup.Done()
+						}(slicedFileByte)
+					}
+					uploadWaitGroup.Wait()
+					// 文件的上传过程完成，推送信息到最后的创建文件信道
+					createFileInfoChan <- fileInfo
+				}(uploadFileInfo)
+			}
+		}
 	}()
 
 	// 做收尾创建文件的协程
 	go func() {
-
+		for {
+			select {
+			case <-closeChan:
+				return
+			case createFileInfo := <-createFileInfoChan:
+				limitChan <- struct{}{}
+				time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
+				go func() {
+					_, err := upload.Create(accessToken, createFileInfo.BaiduFilePath, createFileInfo.FileSize, createFileInfo.BlockList, createFileInfo.PreCreateReturn.UploadId)
+					if err != nil {
+						log.Printf("err: %v\n", err)
+						close(closeChan)
+					}
+					<-limitChan
+					// 创建完表示一个文件处理完毕
+					allUploadFileWG.Done()
+				}()
+			}
+		}
 	}()
 
-	uploadWaitGroup := &sync.WaitGroup{}
-	for {
-		select {
-		case <-closeChan:
-			return nil
-
-		case preFileInfo := <-preFileInfoChan:
-			go func(preFileInfo *FileInfo) {
-				for slicedFileByte := range preFileInfo.SlicedFileBytesChan {
-					limitChan <- struct{}{}
-					time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
-					uploadWaitGroup.Add(1)
-					go func(fileBytes *utils.SlicedFileByte) {
-						if _, err := upload.SingleUpload(accessToken, preFileInfo.PreCreateReturn.UploadId, preFileInfo.BaiduFilePath, fileBytes.Bytes, fileBytes.Index); err != nil {
-							close(closeChan)
-							return
-						}
-						<-limitChan
-						preFileInfo.Bar.IncrBy(int(utils.ChunkSize))
-						uploadWaitGroup.Done()
-					}(slicedFileByte)
-				}
-				uploadWaitGroup.Wait()
-				_, err := upload.Create(accessToken, preFileInfo.BaiduFilePath, preFileInfo.FileSize, preFileInfo.BlockList, preFileInfo.PreCreateReturn.UploadId)
-				if err != nil {
-					log.Printf("err: %v\n", err)
-					close(closeChan)
-				}
-			}(preFileInfo)
-		}
-	}
-
+	// 同步收尾
+	allUploadFileWG.Wait()
+	return nil
 }
 
 // ParseBaiduPrefixPath 处理传入的百度前缀地址，去除首尾可能存在的 '/'

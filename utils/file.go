@@ -43,7 +43,7 @@ type SlicedFileByte struct {
 }
 
 // SliceFilePushToChan 把文件一块块切割后推入给好的 channel，所以要使用协程来运行该函数
-func SliceFilePushToChan(localFilePath string, slicedFileByteChan chan *SlicedFileByte, sequence int) (err error) {
+func SliceFilePushToChan(localFilePath string, slicedFileByteChan chan *SlicedFileByte, sequence int, fileSize int64) (err error) {
 	// Try to read the file
 	file, err := os.Open(localFilePath)
 	if err != nil {
@@ -51,11 +51,19 @@ func SliceFilePushToChan(localFilePath string, slicedFileByteChan chan *SlicedFi
 	}
 	defer file.Close()
 
-	fileInfo, err := os.Stat(localFilePath)
-	if err != nil {
-		return
+	var fullFileSize int64
+	if sequence != 0 {
+		fullFileSize = fileSize
+		if _, err = file.Seek(int64(sequence-1)*MaxSingleFileSize, 0); err != nil {
+			return err
+		}
+	} else {
+		fileInfo, err := os.Stat(localFilePath)
+		if err != nil {
+			return err
+		}
+		fullFileSize = fileInfo.Size()
 	}
-	fullFileSize := fileInfo.Size()
 	sliceFileNum := fullFileSize / ChunkSize
 	lastSize := fullFileSize % ChunkSize
 	// 不能整除，意味着还有一个碎文件

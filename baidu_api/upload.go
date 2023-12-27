@@ -100,12 +100,6 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 						close(closeChan)
 						return
 					}
-					// 预上传后有了文件大小，开启一个进度条
-					preFileInfo.Bar = progress.AddBar(
-						preFileInfo.FileSize,
-						mpb.PrependDecorators(decor.Name(preFileInfo.BaiduFilePath)),
-						mpb.BarRemoveOnComplete(),
-					)
 					preFileInfo.SlicedFileBytesChan = make(chan *utils.SlicedFileByte)
 					// 由于低于 20G 的文件本身只用一个文件信息，并且当前处于独享协程中，所以不需要再开启协程来执行推送切片操作
 					uploadFileInfoChan <- &preFileInfo
@@ -139,6 +133,12 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 					return
 				}
 				go func(fileInfo *FileInfo) {
+					// 上传开启，新建一个进度条
+					fileInfo.Bar = progress.AddBar(
+						fileInfo.FileSize,
+						mpb.PrependDecorators(decor.Name(fileInfo.BaiduFilePath)),
+						mpb.BarRemoveOnComplete(),
+					)
 					// 该文件的碎片上传 wg 同步控制，
 					slicedUploadWaitGroup := &sync.WaitGroup{}
 					for slicedFileByte := range fileInfo.SlicedFileBytesChan {

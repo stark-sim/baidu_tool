@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -60,7 +61,7 @@ func SingleUpload(accessToken string, uploadId string, baiduFilePath string, Fil
 		},
 	}
 
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 5; i++ {
 		ret, err = utils.DoHttpRequest(ret, &client, req)
 		if err != nil {
 			continue
@@ -69,8 +70,8 @@ func SingleUpload(accessToken string, uploadId string, baiduFilePath string, Fil
 	}
 
 	if ret.Md5 == "" {
+		log.Printf("ret: %v; err: %v", ret, err)
 		return ret, errors.New("md5 is empty")
-
 	}
 	return ret, nil
 }

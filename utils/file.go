@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-const MaxSingleFileSize int64 = 20 * 1024 * 1024 * 1024
+const MaxSingleFileSize int64 = 1024 * 1024 * 1024
 const ChunkSize int64 = 4 * 1024 * 1024
 
 // GetFilePathListFromLocalPath 列表形式返回文件或者文件夹下所有文件的路径
@@ -73,21 +73,26 @@ func SliceFilePushToChan(localFilePath string, slicedFileByteChan chan *SlicedFi
 
 	// 文件坑位为分块大小
 	for i := int64(0); i < sliceFileNum; i++ {
-		b := make([]byte, ChunkSize)
-		// 最后一个文件的 bytes 坑位切换成大小
-		if i == sliceFileNum-1 {
-			b = make([]byte, lastSize)
-		}
-
-		// 读取分块字节
-		if _, err = file.Read(b); err != nil {
-			return
-		}
 
 		// 准备输出
 		slicedFileByte := new(SlicedFileByte)
-		slicedFileByte.Bytes = b
 		slicedFileByte.Index = int(i)
+
+		slicedFileByte.Bytes = make([]byte, ChunkSize)
+		// 最后一个文件的 bytes 坑位切换成大小
+		if i == sliceFileNum-1 {
+			slicedFileByte.Bytes = make([]byte, lastSize)
+		}
+
+		// 读取分块字节
+		if _, err = file.Read(slicedFileByte.Bytes); err != nil {
+			log.Fatal(err)
+			return
+		}
+
+		if len(slicedFileByte.Bytes) == 0 {
+			fmt.Printf("%+v", slicedFileByte)
+		}
 
 		slicedFileByteChan <- slicedFileByte
 	}

@@ -68,6 +68,7 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 				for i := 1; i <= fileNum; i++ {
 					// 准备开始预上传，需要网络
 					limitChan <- struct{}{}
+					time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
 					go func(index int, bigLocalFilePath string) {
 						var tempFileInfo FileInfo
 						tempFileInfo.PreCreateReturn, tempFileInfo.BaiduFilePath, tempFileInfo.BlockList, tempFileInfo.FileSize, err = upload.PreCreate(accessToken, bigLocalFilePath, baiduPrefixPath, index)
@@ -79,12 +80,12 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 
 						// 预上传接口调用成功后，这个文件接下来会被开始上传，与此同时就该启动 文件切片传输字节信道 来呼应接下来的上传
 						tempFileInfo.SlicedFileBytesChan = make(chan *utils.SlicedFileByte)
-
+						// 预上传部分占用并行数量必须在 影响上传部分 之前释放
+						<-limitChan
 						// 当前该文件信息已经完成好上传前所有准备工作，可以推送给上传文件信道
 						uploadFileInfoChan <- &tempFileInfo
 						preCreateWG.Done()
 						// 释放一个并行量
-						<-limitChan
 						// 推送到上传信道好后，可以开始传输切片
 						if err = utils.SliceFilePushToChan(bigLocalFilePath, tempFileInfo.SlicedFileBytesChan, index, tempFileInfo.FileSize); err != nil {
 							log.Printf("sliceFilePushToChan err: %v", err)
@@ -104,10 +105,10 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 						return
 					}
 					preFileInfo.SlicedFileBytesChan = make(chan *utils.SlicedFileByte)
-					// 由于低于 20G 的文件本身只用一个文件信息，并且当前处于独享协程中，所以不需要再开启协程来执行推送切片操作
+					// 预上传部分占用并行数量必须在 影响上传部分 之前释放
+					<-limitChan
 					uploadFileInfoChan <- &preFileInfo
 					preCreateWG.Done()
-					<-limitChan
 					if err := utils.SliceFilePushToChan(singleLocalFilePath, preFileInfo.SlicedFileBytesChan, 0, 0); err != nil {
 						log.Printf("err: %+v", err)
 						close(closeChan)
@@ -122,6 +123,9 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 
 	// 做上传碎片文件的协程
 	go func() {
+		// 上传步骤为主要步骤，要控制文件上传的顺序，避免第一个碎片文件和最后一个碎片文件直接间隔太长
+		uploadLimitChan := make(chan struct{}, 1)
+		// 所有上传文件的 wg
 		uploadWG := &sync.WaitGroup{}
 		for {
 			select {
@@ -136,10 +140,12 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 				}
 				// 多一个要上传的文件
 				uploadWG.Add(1)
+				// 为该文件争取到并发量
+				uploadLimitChan <- struct{}{}
 				// 上传开启，新建一个进度条
 				uploadFileInfo.Bar = progress.AddBar(
 					uploadFileInfo.FileSize,
-					mpb.PrependDecorators(decor.Name(uploadFileInfo.BaiduFilePath)),
+					mpb.PrependDecorators(decor.Name(uploadFileInfo.BaiduFilePath), decor.Percentage(decor.WCSyncSpace)),
 					mpb.BarRemoveOnComplete(),
 				)
 				go func(fileInfo *FileInfo) {
@@ -149,21 +155,22 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 						limitChan <- struct{}{}
 						time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
 						slicedUploadWaitGroup.Add(1)
-						go func(fileBytes *utils.SlicedFileByte) {
-							if _, err := upload.SingleUpload(accessToken, fileInfo.PreCreateReturn.UploadId, fileInfo.BaiduFilePath, fileBytes.Bytes, fileBytes.Index); err != nil {
+						go func(fileBytes *utils.SlicedFileByte, smallFileInfo *FileInfo) {
+							if _, err := upload.SingleUpload(accessToken, smallFileInfo.PreCreateReturn.UploadId, smallFileInfo.BaiduFilePath, fileBytes.Bytes, fileBytes.Index); err != nil {
 								close(closeChan)
 								return
 							}
 							<-limitChan
-							fileInfo.Bar.IncrBy(int(utils.ChunkSize))
+							smallFileInfo.Bar.IncrBy(int(utils.ChunkSize))
 							slicedUploadWaitGroup.Done()
-						}(slicedFileByte)
+						}(slicedFileByte, fileInfo)
 					}
 					slicedUploadWaitGroup.Wait()
 					// 文件的上传过程完成，推送信息到最后的创建文件信道
 					createFileInfoChan <- fileInfo
 					// 一个整文件的完成
 					uploadWG.Done()
+					<-uploadLimitChan
 				}(uploadFileInfo)
 			}
 		}

@@ -7,10 +7,12 @@ import (
 	"errors"
 	"io"
 	"log"
+	"math/rand"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 )
 
 type SingleUploadReturn struct {
@@ -64,6 +66,10 @@ func SingleUpload(accessToken string, uploadId string, baiduFilePath string, Fil
 	for i := 0; i < 5; i++ {
 		ret, err = utils.DoHttpRequest(ret, &client, req)
 		if err != nil {
+			time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
+			// 重新构建请求体
+			req, err = http.NewRequest("POST", uri, bytes.NewBuffer(bts))
+			req.Header = header
 			continue
 		}
 		break

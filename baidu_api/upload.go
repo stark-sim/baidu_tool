@@ -124,7 +124,7 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 	// 做上传碎片文件的协程
 	go func() {
 		// 上传步骤为主要步骤，要控制文件上传的顺序，避免第一个碎片文件和最后一个碎片文件直接间隔太长
-		uploadLimitChan := make(chan struct{}, 1)
+		uploadLimitChan := make(chan struct{}, 2)
 		// 所有上传文件的 wg
 		uploadWG := &sync.WaitGroup{}
 		for {
@@ -194,8 +194,8 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 				createWG.Add(1)
 				limitChan <- struct{}{}
 				time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
-				go func() {
-					_, err := upload.Create(accessToken, createFileInfo.BaiduFilePath, createFileInfo.FileSize, createFileInfo.BlockList, createFileInfo.PreCreateReturn.UploadId)
+				go func(fileInfo *FileInfo) {
+					_, err := upload.Create(accessToken, fileInfo.BaiduFilePath, fileInfo.FileSize, fileInfo.BlockList, fileInfo.PreCreateReturn.UploadId)
 					if err != nil {
 						log.Printf("err: %v\n", err)
 						close(closeChan)
@@ -203,7 +203,7 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 					<-limitChan
 					// 创建完表示一个文件处理完毕
 					createWG.Done()
-				}()
+				}(createFileInfo)
 			}
 		}
 	}()

@@ -30,10 +30,10 @@ type CreateReturn struct {
 func Create(accessToken string, baiduFilePath string, size int64, blockList []string, UploadId string) (*CreateReturn, error) {
 	ret := &CreateReturn{}
 
-	protocal := "https"
+	protocol := "https"
 	host := "pan.baidu.com"
 	router := "/rest/2.0/xpan/file?method=create&access_token=%s"
-	uri := protocal + "://" + host + router
+	uri := protocol + "://" + host + router
 	realUrl, _ := url.Parse(fmt.Sprintf(uri, accessToken))
 
 	header := http.Header{}
@@ -44,7 +44,10 @@ func Create(accessToken string, baiduFilePath string, size int64, blockList []st
 	body.Add("path", baiduFilePath)
 	body.Add("size", strconv.FormatInt(size, 10))
 	body.Add("isdir", "0")
-	bts, _ := json.Marshal(blockList)
+	bts, err := json.Marshal(blockList)
+	if err != nil {
+		return nil, err
+	}
 	body.Add("block_list", string(bts))
 	body.Add("uploadid", UploadId)
 	body.Add("rtype", "2")
@@ -56,11 +59,16 @@ func Create(accessToken string, baiduFilePath string, size int64, blockList []st
 		Body:   io.NopCloser(strings.NewReader(body.Encode())),
 	}
 
-	var err error
 	for i := 0; i < 3; i++ {
 		ret, err = utils.DoHttpRequest(ret, &http.Client{}, &req)
 		if err != nil {
 			time.Sleep(time.Second)
+			req = http.Request{
+				Method: "POST",
+				URL:    realUrl,
+				Header: header,
+				Body:   io.NopCloser(strings.NewReader(body.Encode())),
+			}
 			continue
 		}
 		break

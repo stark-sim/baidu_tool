@@ -80,7 +80,7 @@ func SliceFilePushToChan(localFilePath string, slicedFileByteChan chan *SlicedFi
 
 		slicedFileByte.Bytes = make([]byte, ChunkSize)
 		// 最后一个文件的 bytes 坑位切换成大小
-		if i == sliceFileNum-1 {
+		if lastSize != 0 && i == sliceFileNum-1 {
 			slicedFileByte.Bytes = make([]byte, lastSize)
 		}
 
@@ -139,7 +139,7 @@ func SliceFileNotSave(localFilePath string, sequence int, fileSize int64) (md5Li
 	b := make([]byte, ChunkSize)
 	for i := int64(0); i < sliceFileNum; i++ {
 		// 最后一个文件的 bytes 坑位切换成大小
-		if i == sliceFileNum-1 {
+		if lastSize != 0 && i == sliceFileNum-1 {
 			b = make([]byte, lastSize)
 		}
 
@@ -199,7 +199,7 @@ func SliceFileAndSave(localFilePath string) (slicedFilePaths []string, blockList
 		//}
 
 		// 最后一个文件的 bytes 坑位切换成大小
-		if i == sliceFileNum-1 {
+		if lastSize != 0 && i == sliceFileNum-1 {
 			b = make([]byte, lastSize)
 		}
 

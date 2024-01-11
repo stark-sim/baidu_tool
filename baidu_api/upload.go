@@ -248,16 +248,20 @@ func ParseBaiduPrefixPath(baiduPrefixPath string) string {
 }
 
 func SearchUploadedSlicedFileSeqList(accessToken string, localFilePath string, prefixPath string) ([]int, error) {
-	var baiduPath strings.Builder
-	baiduPath.WriteString("/apps")
+	baiduPathBuilder := strings.Builder{}
+	baiduPathBuilder.WriteString("/apps")
 	if prefixPath != "" {
-		baiduPath.WriteString("/")
-		baiduPath.WriteString(prefixPath)
+		baiduPathBuilder.WriteString("/")
+		baiduPathBuilder.WriteString(prefixPath)
 	}
-	baiduPath.WriteString("/")
-	baiduPath.WriteString(localFilePath)
-	resp, err := GetDirByList(accessToken, baiduPath.String())
+	baiduPathBuilder.WriteString("/")
+	baiduPathBuilder.WriteString(localFilePath)
+	baiduPath := baiduPathBuilder.String()
+	resp, err := GetDirByList(accessToken, baiduPath)
 	if err != nil {
+		if err.Error() == "NOT_FOUND" {
+			return nil, nil
+		}
 		return nil, err
 	}
 	var res []int

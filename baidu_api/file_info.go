@@ -77,6 +77,9 @@ func GetDirByList(accessToken string, dirPath string) (*DirListResp, error) {
 		return nil, err
 	}
 	if dirResp.Errno != 0 {
+		if dirResp.Errno == -9 {
+			return nil, fmt.Errorf("NOT_FOUND")
+		}
 		return nil, fmt.Errorf("dir resp not right")
 	}
 	return &dirResp, nil

@@ -3,12 +3,16 @@ package baidu_api
 import (
 	"baidu_tool/upload"
 	"baidu_tool/utils"
+	"fmt"
 	"github.com/vbauerster/mpb"
 	"github.com/vbauerster/mpb/decor"
 	"log"
 	"math/rand"
 	"os"
 	"runtime"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -65,7 +69,19 @@ func UploadFileOrDir(accessToken string, localFilePaths []string, baiduPrefixPat
 				fileNum += int(fileSize / utils.MaxSingleFileSize)
 				// 比预期的单文件要额外多预上传 fileNum - 1 个文件
 				preCreateWG.Add(fileNum - 1)
+
+				// 如果是要分割的大文件，先看多少小文件已经上传好了
+				uploadedSlicedSeqList, err := SearchUploadedSlicedFileSeqList(accessToken, localFilePath, baiduPrefixPath)
+				if err != nil {
+					fmt.Printf("SearchUplaodSliecdFileSeqList err %v", err)
+					return
+				}
 				for i := 1; i <= fileNum; i++ {
+					// 若切割文件已存在，可以直接跳过
+					if slices.Contains(uploadedSlicedSeqList, i) {
+						preCreateWG.Done()
+						continue
+					}
 					// 准备开始预上传，需要网络
 					limitChan <- struct{}{}
 					time.Sleep(time.Second + time.Millisecond*time.Duration(rand.Intn(100)))
@@ -229,4 +245,28 @@ func ParseBaiduPrefixPath(baiduPrefixPath string) string {
 		baiduPrefixPath = baiduPrefixPath[:len(baiduPrefixPath)-1]
 	}
 	return baiduPrefixPath
+}
+
+func SearchUploadedSlicedFileSeqList(accessToken string, localFilePath string, prefixPath string) ([]int, error) {
+	var baiduPath strings.Builder
+	baiduPath.WriteString("/apps")
+	if prefixPath != "" {
+		baiduPath.WriteString("/")
+		baiduPath.WriteString(prefixPath)
+	}
+	baiduPath.WriteString("/")
+	baiduPath.WriteString(localFilePath)
+	resp, err := GetDirByList(accessToken, baiduPath.String())
+	if err != nil {
+		return nil, err
+	}
+	var res []int
+	for _, fileOrDir := range resp.List {
+		fileNameSeq, err := strconv.Atoi(fileOrDir.ServerFilename)
+		if err != nil {
+			return nil, err
+		}
+		res = append(res, fileNameSeq)
+	}
+	return res, nil
 }

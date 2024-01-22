@@ -2,9 +2,12 @@ package utils
 
 import (
 	"crypto/md5"
+	"errors"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -245,4 +248,57 @@ func DivideDirAndFile(filePath string) (dir string, file string, err error) {
 		return "", "", fmt.Errorf("not found /")
 	}
 	return filePath[:lastIndex], filePath[lastIndex+1:], nil
+}
+
+// JigsawSlicedFiles 合并本脚步拆分的超大文件碎片
+func JigsawSlicedFiles(slicedFilesDir string) error {
+	// 输入的是碎片文件所在的文件夹
+	targetDirInfo, err := os.Stat(slicedFilesDir)
+	if err != nil {
+		return err
+	}
+	if !targetDirInfo.IsDir() {
+		return errors.New("input is not a dir")
+	}
+
+	_, fileName, err := DivideDirAndFile(slicedFilesDir)
+	if err != nil {
+		return err
+	}
+	targetFile, err := os.OpenFile(filepath.Join(slicedFilesDir, fileName), os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0777)
+	defer targetFile.Close()
+	if err != nil {
+		fmt.Printf("打开目标文件错误: %v\n", err)
+		return err
+	}
+
+	// 拼接后看情况删除文件，都删除完拼接过程再算结束
+	//removeSliceWG := &sync.WaitGroup{}
+	// 碎片文件名从 1 开始，按十进制递增
+	for i := int64(1); i <= 1024; i++ {
+		content, err := os.ReadFile(filepath.Join(slicedFilesDir, strconv.FormatInt(i, 10)))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				// 碎片文件已遍历完，结束
+				break
+			}
+			fmt.Printf("读碎片文件错误")
+			return err
+		}
+		_, err = targetFile.Write(content)
+		if err != nil {
+			fmt.Printf("追加文件错误")
+			return err
+		}
+		//removeSliceWG.Add(1)
+		//go func(sliceFile string, wg *sync.WaitGroup) {
+		//	if err = os.Remove(sliceFile); err != nil {
+		//		fmt.Printf("删除碎片文件错误")
+		//		return
+		//	}
+		//}(sliceFileIndexPaths[i].FilePath, removeSliceWG)
+	}
+
+	fmt.Printf("文件拼接好了 %s\n", fmt.Sprintf("%s/%s", slicedFilesDir, fileName))
+	return nil
 }

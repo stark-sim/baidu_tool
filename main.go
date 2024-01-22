@@ -12,11 +12,13 @@ import (
 func main() {
 	var input struct {
 		IsUpload        bool
+		IsJigsaw        bool
 		AccessToken     string
 		Path            string
 		BaiduPrefixPath string
 	}
 	flag.BoolVar(&input.IsUpload, "upload", false, "使用上传功能，默认使用下载功能")
+	flag.BoolVar(&input.IsJigsaw, "jigsaw", false, "使用拼接功能，默认使用下载功能，与上传同在时无效")
 	flag.StringVar(&input.AccessToken, "access_token", "", "用户身份凭证")
 	flag.StringVar(&input.Path, "path", "", "文件或文件夹路径")
 	flag.StringVar(&input.BaiduPrefixPath, "prefix", "", "上传到百度网盘后所在的文件位置前缀部分，不传则直接在 我的应用数据 目录")
@@ -28,7 +30,33 @@ func main() {
 		fmt.Printf("input file/dir path by --path [file/dir path]\n")
 	}
 
-	if !input.IsUpload {
+	if input.IsUpload {
+		// 上传
+		baiduPrefixPath := baidu_api.ParseBaiduPrefixPath(input.BaiduPrefixPath)
+		// 如果前缀是 ./ ，可以去除
+		input.Path = strings.TrimPrefix(input.Path, "./")
+		// 本地的文件路径如果最后有 / 要去除
+		input.Path = strings.TrimSuffix(input.Path, "/")
+		// 解析出文件或文件夹下所有要上传的文件
+		filePathList, err := utils.GetFilePathListFromLocalPath(input.Path)
+		if err != nil {
+			return
+		}
+		// 多个文件的上传共用一个 mpb 进度
+		progress := mpb.New()
+
+		if err = baidu_api.UploadFileOrDir(input.AccessToken, filePathList, baiduPrefixPath, progress); err != nil {
+			return
+		}
+
+	} else if input.IsJigsaw {
+		// 拼接
+
+		if err := utils.JigsawSlicedFiles(input.Path); err != nil {
+			panic(err)
+			return
+		}
+	} else {
 		// 下载
 
 		// 开始搜索，找文件信息
@@ -79,24 +107,5 @@ func main() {
 				return
 			}
 		}
-	} else {
-		// 上传
-		baiduPrefixPath := baidu_api.ParseBaiduPrefixPath(input.BaiduPrefixPath)
-		// 如果前缀是 ./ ，可以去除
-		input.Path = strings.TrimPrefix(input.Path, "./")
-		// 本地的文件路径如果最后有 / 要去除
-		input.Path = strings.TrimSuffix(input.Path, "/")
-		// 解析出文件或文件夹下所有要上传的文件
-		filePathList, err := utils.GetFilePathListFromLocalPath(input.Path)
-		if err != nil {
-			return
-		}
-		// 多个文件的上传共用一个 mpb 进度
-		progress := mpb.New()
-
-		if err = baidu_api.UploadFileOrDir(input.AccessToken, filePathList, baiduPrefixPath, progress); err != nil {
-			return
-		}
-
 	}
 }

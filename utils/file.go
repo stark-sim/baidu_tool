@@ -208,7 +208,7 @@ func SliceFileAndSave(localFilePath string) (slicedFilePaths []string, blockList
 			return nil, nil, err
 		}
 
-		sliceFileName := fmt.Sprintf("%s%d", localFilePath, i)
+		sliceFileName := fmt.Sprintf("%s_%d", localFilePath, i)
 		// 切分时记录文件的信息
 		slicedFilePaths = append(slicedFilePaths, sliceFileName)
 		blockList = append(blockList, fmt.Sprintf("%x", md5.Sum(b)))

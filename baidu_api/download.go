@@ -199,7 +199,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 			for i := 0; i < int(sliceNum); i++ {
 				downloadWG.Add(1)
 				// 先得到最终的碎片文件路径
-				localDownloadFilePath := fmt.Sprintf(".%s%d", strings.TrimPrefix(downloadInfo.Path, unusedPath), i)
+				localDownloadFilePath := fmt.Sprintf(".%s_%d", strings.TrimPrefix(downloadInfo.Path, unusedPath), i)
 				// 如果碎片文件已存在，那么直接算作完成跳过
 				_, err = os.Stat(localDownloadFilePath)
 				if os.IsNotExist(err) {
@@ -277,7 +277,7 @@ func DownloadFileOrDir(accessToken string, sources []*FileOrDir, unusedPath stri
 			// 下载最后一个文件
 			downloadWG.Add(1)
 			// 先得到最终的碎片文件路径
-			localDownloadFilePath := fmt.Sprintf(".%s%d", strings.TrimPrefix(downloadInfo.Path, unusedPath), sliceNum)
+			localDownloadFilePath := fmt.Sprintf(".%s_%d", strings.TrimPrefix(downloadInfo.Path, unusedPath), sliceNum)
 			// 如果碎片文件已存在，那么直接算作完成跳过
 			_, err = os.Stat(localDownloadFilePath)
 			if os.IsNotExist(err) {

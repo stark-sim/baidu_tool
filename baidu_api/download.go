@@ -21,13 +21,13 @@ import (
 
 type DownloadLinkResp struct {
 	Errmsg    string          `json:"errmsg"`
-	Errno     int8            `json:"errno"`
+	Errno     int32           `json:"errno"`
 	List      []*DownloadInfo `json:"list"`
-	RequestID string          `json:"request_id"`
+	RequestID interface{}     `json:"request_id"`
 }
 
 type DownloadInfo struct {
-	Category int8   `json:"category"`
+	Category int32  `json:"category"`
 	DLink    string `json:"dlink"`
 	Filename string `json:"filename"`
 	FsID     int64  `json:"fs_id"`

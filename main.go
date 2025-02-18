@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/vbauerster/mpb"
+	"log"
 	"strings"
 )
 
@@ -40,12 +41,14 @@ func main() {
 		// 解析出文件或文件夹下所有要上传的文件
 		filePathList, err := utils.GetFilePathListFromLocalPath(input.Path)
 		if err != nil {
+			log.Println(err)
 			return
 		}
 		// 多个文件的上传共用一个 mpb 进度
 		progress := mpb.New()
 
 		if err = baidu_api.UploadFileOrDir(input.AccessToken, filePathList, baiduPrefixPath, progress); err != nil {
+			log.Println(err)
 			return
 		}
 
@@ -62,6 +65,7 @@ func main() {
 		// 开始搜索，找文件信息
 		dirResp, err := baidu_api.GetFileOrDirResp(input.AccessToken, input.Path)
 		if err != nil {
+			log.Println(err)
 			return
 		}
 		// 如果文件夹信息中没有内容，那么要么是文件，要么是没有
@@ -69,10 +73,12 @@ func main() {
 			// 退回上一层路径，用列表再次搜索
 			parentDir, file, err := utils.DivideDirAndFile(input.Path)
 			if err != nil {
+				log.Println(err)
 				return
 			}
 			dirListResp, err := baidu_api.GetDirByList(input.AccessToken, parentDir)
 			if err != nil {
+				log.Println(err)
 				return
 			}
 			// 看看这次 list 中有没有 file
@@ -87,6 +93,7 @@ func main() {
 						// 直接下载这个文件，不需要前面的目录
 						err = baidu_api.DownloadFileOrDir(input.AccessToken, []*baidu_api.FileOrDir{item}, parentDir)
 						if err != nil {
+							log.Println(err)
 							return
 						}
 						foundFile = true
@@ -104,6 +111,7 @@ func main() {
 			// 找到了，那么这是个文件夹，下载该文件夹和其内部所有文件
 			err = baidu_api.DownloadFileOrDir(input.AccessToken, dirResp.List, parentDir)
 			if err != nil {
+				log.Println(err)
 				return
 			}
 		}
